@@ -16,12 +16,11 @@ export default function Dashboard() {
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   
-  // PWA 설치 안내 상태 (기본값 false)
   const [showInstallToast, setShowInstallToast] = useState(false);
   const [userAgent, setUserAgent] = useState({ isIOS: false, isAndroid: false });
-
   const [details, setDetails] = useState({ assets: [] as any[], liabilities: [] as any[] });
 
+  // 데이터 불러오기 함수
   const fetchData = async () => {
     setLoading(true);
     const { data, error } = await supabase.from('assets').select('*');
@@ -39,17 +38,15 @@ export default function Dashboard() {
     setIsMounted(true);
     fetchData();
 
-    // --- 모바일 환경 및 설치 여부 확인 로직 ---
+    // 1. 모바일 환경 감지
     const ua = window.navigator.userAgent.toLowerCase();
     const isIOS = /iphone|ipad|ipod/.test(ua);
     const isAndroid = /android/.test(ua);
     setUserAgent({ isIOS, isAndroid });
 
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches 
-                       || (window.navigator as any).standalone 
-                       || document.referrer.includes('android-app://');
+                       || (window.navigator as any).standalone;
     
-    // 모바일 브라우저에서 설치되지 않은 상태로 접속 시 2초 후 토스트 노출
     if ((isIOS || isAndroid) && !isStandalone) {
       const timer = setTimeout(() => setShowInstallToast(true), 2000);
       return () => clearTimeout(timer);
@@ -91,13 +88,17 @@ export default function Dashboard() {
   if (!isMounted) return null;
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans overflow-x-hidden pb-10 relative">
+    /* [핵심 수정] 
+       1. overscroll-y-contain: 상하단 바운스 시 브라우저 기본 동작 제어
+       2. touch-pan-y: y축 스크롤만 허용하여 쫀득한 느낌 유지
+    */
+    <div className="min-h-screen bg-white text-slate-900 font-sans overflow-x-hidden pb-10 relative overscroll-y-contain touch-pan-y">
       
       {/* --- 1. Header --- */}
-      <header className="fixed top-0 left-0 w-full bg-white/90 backdrop-blur-md border-b z-[150] px-4 pt-[env(safe-area-inset-top)] h-[calc(60px+env(safe-area-inset-top))] flex justify-between items-center shadow-sm">
+      <header className="fixed top-0 left-0 w-full bg-white/95 backdrop-blur-md border-b z-[150] px-4 pt-[env(safe-area-inset-top)] h-[calc(60px+env(safe-area-inset-top))] flex justify-between items-center">
         <div className="w-10" /> 
         <h1 className="text-xl font-black tracking-tighter text-blue-600 italic">PennyWise</h1>
-        <button onClick={() => setIsMenuOpen(true)} className="p-3 -mr-2 active:opacity-50"><Menu size={26} className="text-slate-800" /></button>
+        <button onClick={() => setIsMenuOpen(true)} className="p-3 -mr-2"><Menu size={26} className="text-slate-800" /></button>
       </header>
 
       {/* --- 2. Side Menu --- */}
@@ -106,10 +107,13 @@ export default function Dashboard() {
           <div className="fixed inset-0 z-[250] flex justify-end">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsMenuOpen(false)} />
             <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 200 }} className="relative w-[75%] max-w-sm h-full bg-white shadow-2xl p-6 pt-[calc(20px+env(safe-area-inset-top))] flex flex-col">
-              <button className="self-start mb-10 p-3 -ml-2 active:bg-slate-100 rounded-full" onClick={() => setIsMenuOpen(false)}><X size={26} /></button>
+              <button className="self-start mb-10 p-3 -ml-2 rounded-full" onClick={() => setIsMenuOpen(false)}><X size={26} /></button>
               <nav className="flex flex-col gap-8 text-xl font-bold">
                 <p className="text-blue-600 text-xs uppercase tracking-[0.2em] border-b pb-2">Navigation</p>
-                <button className="flex items-center justify-between py-1 text-left active:text-blue-600 group" onClick={() => setIsMenuOpen(false)}><span>총자산 대시보드</span> <ChevronRight size={20} className="text-slate-300" /></button>
+                <button className="flex items-center justify-between py-1 text-left active:text-blue-600" onClick={() => { setIsMenuOpen(false); fetchData(); }}>
+                   <span>새로고침</span> 
+                   <ChevronRight size={20} className="text-slate-300" />
+                </button>
               </nav>
             </motion.div>
           </div>
@@ -117,13 +121,19 @@ export default function Dashboard() {
       </AnimatePresence>
 
       {/* --- 3. Main Content --- */}
-      <main className="pt-[calc(70px+env(safe-area-inset-top))] pb-8 px-5 max-w-md mx-auto relative z-10">
+      <main className="pt-[calc(75px+env(safe-area-inset-top))] pb-8 px-5 max-w-md mx-auto relative z-10">
+        
+        {/* 당겨서 새로고침 안내 텍스트 (옵션) */}
+        <div className="text-center text-[10px] text-slate-300 font-bold mb-4 animate-pulse">
+           ↓ Pull to refresh data
+        </div>
+
         <section className="bg-white rounded-3xl shadow-sm border border-slate-100 p-4 mb-6 relative">
           <button onClick={() => setIsEditMode(!isEditMode)} className={`absolute top-3 right-3 z-10 p-2.5 rounded-xl shadow-lg transition-all active:scale-95 ${isEditMode ? 'bg-blue-600 text-white' : 'bg-slate-900 text-white'}`}>
             {isEditMode ? <Check size={16} strokeWidth={3} /> : <Edit2 size={16} strokeWidth={3} />}
           </button>
           <div className="flex items-center justify-between h-40">
-            {loading ? <div className="w-full text-center text-slate-200 italic font-bold animate-pulse text-sm tracking-tighter">Syncing...</div> : (
+            {loading ? <div className="w-full text-center text-slate-200 italic font-bold animate-pulse text-sm">Syncing...</div> : (
               <>
                 <div className="relative w-3/5 h-full">
                   <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={totalData} innerRadius={55} outerRadius={75} paddingAngle={6} dataKey="value" stroke="none">{totalData.map((entry, i) => (<Cell key={i} fill={entry.color} />))}</Pie></PieChart></ResponsiveContainer>
@@ -161,56 +171,20 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {/* --- 4. [요청 반영] 중앙 배치 PWA 설치 안내 토스트 --- */}
+      {/* --- 4. 중앙 배치 PWA 설치 안내 토스트 --- */}
       <AnimatePresence>
         {showInstallToast && (
-          <div className="fixed inset-0 z-[400] flex items-center justify-center px-6 py-20 pointer-events-none">
-            {/* 오버레이 (클릭 시 닫힘) */}
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm pointer-events-auto" 
-              onClick={() => setShowInstallToast(false)} 
-            />
-            
-            {/* 토스트 본체 (중앙 배치) */}
-            <motion.div 
-              initial={{ scale: 0.8, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.8, opacity: 0, y: 20 }}
-              transition={{ type: "spring", damping: 20, stiffness: 300 }}
-              className="relative w-full max-w-sm bg-slate-900 text-white p-6 rounded-3xl shadow-2xl flex flex-col items-center border border-white/10 pointer-events-auto text-center"
-            >
+          <div className="fixed inset-0 z-[400] flex items-center justify-center px-6 pointer-events-none">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm pointer-events-auto" onClick={() => setShowInstallToast(false)} />
+            <motion.div initial={{ scale: 0.8, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.8, opacity: 0, y: 20 }} className="relative w-full max-w-sm bg-slate-900 text-white p-6 rounded-3xl shadow-2xl flex flex-col items-center border border-white/10 pointer-events-auto text-center">
               <div className="bg-blue-600 p-4 rounded-full mb-5 shadow-inner"><Download size={28} className="text-white" /></div>
-              
               <h3 className="text-xl font-black text-white mb-2">PennyWise 앱 설치</h3>
               <p className="text-sm text-slate-300 font-bold tracking-tight mb-6">바탕화면에 추가하여 더 빠르고 편리하게 자산을 관리하세요!</p>
-              
-              {/* 기기별 간결한 안내 */}
               <div className="w-full space-y-3 bg-slate-800 p-4 rounded-2xl border border-slate-700 mb-6">
-                {userAgent.isIOS && (
-                  <div className="flex items-center gap-3 justify-center text-sm font-black text-blue-400">
-                    <Apple size={20} className="shrink-0" />
-                    <span>Safari: 공유 icon {'>'} 홈 화면 추가</span>
-                  </div>
-                )}
-                {userAgent.isAndroid && (
-                  <div className="flex items-center gap-3 justify-center text-sm font-black text-green-400">
-                    <Info size={18} className="shrink-0" />
-                    <span>Chrome: 메뉴 {'>'} 앱 설치 (또는 홈 화면 추가)</span>
-                  </div>
-                )}
+                {userAgent.isIOS && <div className="flex items-center gap-3 justify-center text-sm font-black text-blue-400"><Apple size={20} className="shrink-0" /><span>Safari: 공유 {'>'} 홈 화면 추가</span></div>}
+                {userAgent.isAndroid && <div className="flex items-center gap-3 justify-center text-sm font-black text-green-400"><Info size={18} className="shrink-0" /><span>Chrome: 메뉴 {'>'} 설치</span></div>}
               </div>
-              
-              <button 
-                onClick={() => setShowInstallToast(false)} 
-                className="w-full bg-slate-700 text-white py-3.5 rounded-xl font-black shadow-md active:scale-95 transition-all mt-2 uppercase tracking-widest text-xs"
-              >
-                닫기
-              </button>
-              
-              <button onClick={() => setShowInstallToast(false)} className="absolute top-4 right-4 p-2 text-slate-500 hover:text-white transition-colors"><X size={18} /></button>
+              <button onClick={() => setShowInstallToast(false)} className="w-full bg-slate-700 text-white py-3.5 rounded-xl font-black shadow-md active:scale-95 transition-all text-xs">닫기</button>
             </motion.div>
           </div>
         )}
@@ -221,7 +195,7 @@ export default function Dashboard() {
         {isModalOpen && (
           <div className="fixed inset-0 z-[300] flex items-end justify-center">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsModalOpen(false)} />
-            <motion.form onSubmit={handleSave} initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 200 }} className="relative w-full max-h-[85%] bg-white rounded-t-[2.5rem] shadow-2xl px-6 pt-4 pb-6 flex flex-col max-w-md">
+            <motion.form onSubmit={handleSave} initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} className="relative w-full max-h-[85%] bg-white rounded-t-[2.5rem] shadow-2xl px-6 pt-4 pb-6 flex flex-col max-w-md">
               <div className="w-12 h-1 bg-slate-200 rounded-full mx-auto mb-6 shrink-0" />
               <div className="flex justify-between items-center mb-6 shrink-0">
                 <div className="flex items-center gap-2">{isEditMode || selectedItem?.isNew ? <Unlock size={18} className="text-blue-600"/> : <Lock size={18} className="text-slate-400"/>}<h3 className="text-xl font-black text-slate-800">{selectedItem?.isNew ? '항목 추가' : (isEditMode ? '항목 수정' : '상세 정보')}</h3></div>
@@ -241,6 +215,23 @@ export default function Dashboard() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* --- 6. 글로벌 CSS (바운스 방지 및 당겨서 새로고침 허용) --- */}
+      <style jsx global>{`
+        html, body {
+          background-color: white !important; /* 배경을 흰색으로 고정 */
+          overscroll-behavior-y: contain;   /* 브라우저 기본 바운스 효과 제어 */
+        }
+        
+        /* 메인 컨테이너에서 상단 새로고침 허용 */
+        .overscroll-y-contain {
+          overscroll-behavior-y: auto; 
+        }
+
+        .no-scrollbar::-webkit-scrollbar {
+          display: none;
+        }
+      `}</style>
     </div>
   );
 }
