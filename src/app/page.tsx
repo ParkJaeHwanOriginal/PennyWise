@@ -16,20 +16,14 @@ export default function Dashboard() {
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   
-  // 데이터 상태
   const [details, setDetails] = useState({ assets: [] as any[], liabilities: [] as any[] });
-  
-  // [핵심] 수정 모드 임시 저장소 (체크 버튼을 누르기 전까지는 DB에 안 보냄)
   const [pendingChanges, setPendingChanges] = useState<any[]>([]); 
   const [pendingDeletes, setPendingDeletes] = useState<string[]>([]);
 
-  // Pull-to-Refresh 상태
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
   const startY = useRef(0);
 
-  // PWA 안내
   const [showInstallToast, setShowInstallToast] = useState(false);
   const [userAgent, setUserAgent] = useState({ isIOS: false, isAndroid: false });
 
@@ -42,7 +36,7 @@ export default function Dashboard() {
         assets: data.filter(item => item.type === '자산').sort(sortByAmount),
         liabilities: data.filter(item => item.type === '부채').sort(sortByAmount)
       });
-      setPendingChanges([]); // 변경 내역 초기화
+      setPendingChanges([]);
       setPendingDeletes([]);
     }
     setLoading(false);
@@ -57,7 +51,6 @@ export default function Dashboard() {
     setUserAgent({ isIOS: /iphone|ipad|ipod/.test(ua), isAndroid: /android/.test(ua) });
   }, []);
 
-  // --- [핵심] Pull to Refresh 로직 ---
   const handleTouchStart = (e: React.TouchEvent) => {
     if (window.scrollY === 0) startY.current = e.touches[0].pageY;
   };
@@ -79,14 +72,11 @@ export default function Dashboard() {
     }
   };
 
-  // --- [핵심] 수정 모드 확정 로직 (체크 버튼 클릭 시) ---
   const commitChanges = async () => {
     setLoading(true);
-    // 1. 삭제 처리
     if (pendingDeletes.length > 0) {
       await supabase.from('assets').delete().in('id', pendingDeletes);
     }
-    // 2. 추가/수정 처리
     for (const item of pendingChanges) {
       const { isNew, ...dbItem } = item;
       if (isNew) {
@@ -99,7 +89,6 @@ export default function Dashboard() {
     await fetchData();
   };
 
-  // 모달 내 임시 저장
   const handleTempSave = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -113,21 +102,15 @@ export default function Dashboard() {
       isNew: selectedItem?.isNew || false
     };
 
-    // 로컬 상태(UI)만 즉시 업데이트
-    const updatedAssets = [...details.assets];
-    const updatedLiabilities = [...details.liabilities];
-
-    // 기존 리스트에서 제거 (수정 대응)
     const filterOut = (list: any[]) => list.filter(i => i.id !== itemData.id);
-    const newAssets = itemData.type === '자산' ? [...filterOut(updatedAssets), itemData] : filterOut(updatedAssets);
-    const newLiabilities = itemData.type === '부채' ? [...filterOut(updatedLiabilities), itemData] : filterOut(updatedLiabilities);
+    const newAssets = itemData.type === '자산' ? [...filterOut(details.assets), itemData] : filterOut(details.assets);
+    const newLiabilities = itemData.type === '부채' ? [...filterOut(details.liabilities), itemData] : filterOut(details.liabilities);
 
     setDetails({
       assets: newAssets.sort((a, b) => b.amount - a.amount),
       liabilities: newLiabilities.sort((a, b) => b.amount - a.amount)
     });
 
-    // 확정 대기 목록에 추가
     setPendingChanges(prev => [...prev.filter(i => i.id !== itemData.id), itemData]);
     setIsModalOpen(false);
   };
@@ -153,15 +136,13 @@ export default function Dashboard() {
 
   return (
     <div 
-      ref={containerRef}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
       className="min-h-screen bg-white text-slate-900 font-sans overflow-x-hidden pb-10 relative touch-pan-y"
     >
-      {/* Pull to Refresh Indicator */}
       <div 
-        className="absolute w-full flex justify-center items-center overflow-hidden pointer-events-none"
+        className="absolute w-full flex justify-center items-center overflow-hidden pointer-events-none z-[200]"
         style={{ height: pullDistance, top: 0, transition: isRefreshing ? 'none' : 'height 0.2s' }}
       >
         <div className="flex flex-col items-center gap-1 opacity-60">
@@ -172,7 +153,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* --- 1. Header --- */}
       <header className="fixed top-0 left-0 w-full bg-white/95 backdrop-blur-md border-b z-[150] px-4 pt-[env(safe-area-inset-top)] h-[calc(60px+env(safe-area-inset-top))] flex justify-between items-center">
         <div className="w-10" /> 
         <h1 className="text-xl font-black tracking-tighter text-blue-600 italic">PennyWise</h1>
@@ -180,8 +160,6 @@ export default function Dashboard() {
       </header>
 
       <main className="pt-[calc(75px+env(safe-area-inset-top))] pb-8 px-5 max-w-md mx-auto relative z-10">
-        
-        {/* --- 차트 섹션 --- */}
         <section className="bg-white rounded-3xl shadow-sm border border-slate-100 p-4 mb-6 relative">
           <button 
             onClick={() => isEditMode ? commitChanges() : setIsEditMode(true)} 
@@ -210,13 +188,19 @@ export default function Dashboard() {
           {isEditMode && <p className="text-[9px] text-center font-bold text-green-600 mt-2 animate-pulse uppercase tracking-widest">Editing Mode: Press Check to Save all</p>}
         </section>
 
-        {/* --- 리스트 영역 --- */}
         <div className="space-y-6">
           {[ { title: '자산 내역', data: details.assets, icon: <Wallet size={16}/>, color: 'blue' }, { title: '부채 내역', data: details.liabilities, icon: <Landmark size={16}/>, color: 'red' } ].map((sec) => (
             <div key={sec.title}>
               <div className="flex items-center justify-between mb-3 px-1">
                  <div className="flex items-center gap-2"><div className={`p-1.5 rounded-lg ${sec.color === 'blue' ? 'bg-blue-100 text-blue-600' : 'bg-red-100 text-red-600'}`}>{sec.icon}</div><h3 className="font-black text-lg italic">{sec.title}</h3></div>
-                 {isEditMode && <button onClick={() => setSelectedItem({ type: sec.title.includes('자산') ? '자산' : '부채', isNew: true }) || setIsModalOpen(true)} className={`p-1.5 rounded-full shadow-md active:scale-90 transition-all ${sec.color === 'blue' ? 'bg-blue-600 text-white' : 'bg-red-600 text-white'}`}><Plus size={16}/></button>}
+                 {isEditMode && (
+                   <button 
+                    onClick={() => { setSelectedItem({ type: sec.title.includes('자산') ? '자산' : '부채', isNew: true }); setIsModalOpen(true); }} 
+                    className={`p-1.5 rounded-full shadow-md active:scale-90 transition-all ${sec.color === 'blue' ? 'bg-blue-600 text-white' : 'bg-red-600 text-white'}`}
+                   >
+                    <Plus size={16}/>
+                   </button>
+                 )}
               </div>
               <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden min-h-[100px] flex flex-col transition-all">
                  {sec.data.length === 0 ? <div className="flex-1 p-10 text-center flex flex-col items-center justify-center"><p className="text-xs text-slate-300 font-bold italic tracking-tight">비어있음</p></div> : sec.data.map(item => (
@@ -231,7 +215,23 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {/* --- Bottom Sheet Modal --- */}
+      {/* Side Menu & Modal & Install Toast (생략 없이 전문 포함) */}
+      <AnimatePresence>
+        {isMenuOpen && (
+          <div className="fixed inset-0 z-[250] flex justify-end">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsMenuOpen(false)} />
+            <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 200 }} className="relative w-[75%] max-sm h-full bg-white shadow-2xl p-6 pt-[calc(20px+env(safe-area-inset-top))] flex flex-col">
+              <button className="self-start mb-10 p-3 -ml-2 rounded-full" onClick={() => setIsMenuOpen(false)}><X size={26} /></button>
+              <nav className="flex flex-col gap-8 text-xl font-bold">
+                <button className="flex items-center justify-between py-1 text-left" onClick={() => { setIsMenuOpen(false); fetchData(); }}>
+                   <span>새로고침</span> <RefreshCcw size={20} className="text-slate-300" />
+                </button>
+              </nav>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {isModalOpen && (
           <div className="fixed inset-0 z-[300] flex items-end justify-center">
@@ -247,13 +247,13 @@ export default function Dashboard() {
               </div>
               <div className="space-y-4 overflow-y-auto pr-1 no-scrollbar pb-2 flex-1">
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">기관(은행)</label><select name="bank" disabled={!isEditMode && !selectedItem?.isNew} defaultValue={selectedItem?.bank || '기타'} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black focus:ring-2 focus:ring-blue-600 outline-none appearance-none disabled:opacity-70">{BANKS.map(b => <option key={b} value={b}>{b}</option>)}</select></div>
-                  <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">종류</label><select name="type" disabled={!isEditMode && !selectedItem?.isNew} defaultValue={selectedItem?.type} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black focus:ring-2 focus:ring-blue-600 outline-none appearance-none disabled:opacity-70"><option value="자산">자산</option><option value="부채">부채</option></select></div>
+                  <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">기관(은행)</label><select name="bank" disabled={!isEditMode && !selectedItem?.isNew} defaultValue={selectedItem?.bank || '기타'} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black outline-none">{BANKS.map(b => <option key={b} value={b}>{b}</option>)}</select></div>
+                  <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">종류</label><select name="type" disabled={!isEditMode && !selectedItem?.isNew} defaultValue={selectedItem?.type} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black outline-none"><option value="자산">자산</option><option value="부채">부채</option></select></div>
                 </div>
-                <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">항목 상세명</label><input name="name" required disabled={!isEditMode && !selectedItem?.isNew} type="text" defaultValue={selectedItem?.name} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black focus:ring-2 focus:ring-blue-600 outline-none disabled:opacity-70" /></div>
-                <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">금액 (원)</label><input name="amount" required min="0" disabled={!isEditMode && !selectedItem?.isNew} type="number" defaultValue={selectedItem?.amount} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black focus:ring-2 focus:ring-blue-600 outline-none disabled:opacity-70" /></div>
-                <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">메모</label><textarea name="memo" disabled={!isEditMode && !selectedItem?.isNew} defaultValue={selectedItem?.memo} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black h-20 focus:ring-2 focus:ring-blue-600 outline-none resize-none disabled:opacity-70" /></div>
-                {(isEditMode || selectedItem?.isNew) && <button type="submit" className="w-full bg-green-600 text-white py-4 rounded-xl font-black shadow-lg active:scale-95 transition-all mt-2 uppercase tracking-widest text-sm">Apply Changes</button>}
+                <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">항목 상세명</label><input name="name" required disabled={!isEditMode && !selectedItem?.isNew} type="text" defaultValue={selectedItem?.name} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black outline-none" /></div>
+                <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">금액 (원)</label><input name="amount" required min="0" disabled={!isEditMode && !selectedItem?.isNew} type="number" defaultValue={selectedItem?.amount} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black outline-none" /></div>
+                <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">메모</label><textarea name="memo" disabled={!isEditMode && !selectedItem?.isNew} defaultValue={selectedItem?.memo} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black h-20 outline-none resize-none" /></div>
+                {(isEditMode || selectedItem?.isNew) && <button type="submit" className="w-full bg-green-600 text-white py-4 rounded-xl font-black shadow-lg active:scale-95 transition-all mt-2 uppercase tracking-widest text-sm text-center">Apply Changes</button>}
               </div>
             </motion.form>
           </div>
