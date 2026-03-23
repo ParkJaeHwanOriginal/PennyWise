@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Menu, X, Edit2, ChevronRight, Wallet, Landmark, Plus, Check, Lock, Unlock, Trash2, RefreshCcw } from 'lucide-react';
+import { Menu, X, Edit2, ChevronRight, Wallet, Landmark, Plus, Check, Lock, Unlock, Trash2, RefreshCcw, Download, Apple, Info } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
@@ -20,13 +20,17 @@ export default function Dashboard() {
   const [pendingChanges, setPendingChanges] = useState<any[]>([]); 
   const [pendingDeletes, setPendingDeletes] = useState<string[]>([]);
 
-  // Pull-to-Refresh 및 차트 감지용 상태
+  // Pull-to-Refresh 및 스크롤 상태
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isChartVisible, setIsChartVisible] = useState(true);
   
   const startY = useRef(0);
-  const chartRef = useRef<HTMLDivElement>(null);
+  const isAtTopOnStart = useRef(false); // [핵심] 터치 시작 시 최상단 여부 확인
+
+  // PWA 안내
+  const [showInstallToast, setShowInstallToast] = useState(false);
+  const [userAgent, setUserAgent] = useState({ isIOS: false, isAndroid: false });
 
   const fetchData = async () => {
     setLoading(true);
@@ -41,46 +45,73 @@ export default function Dashboard() {
       setPendingDeletes([]);
     }
     setLoading(false);
-    setIsRefreshing(false);
-    setPullDistance(0);
+    
+    // 새로고침 완료 후 애니메이션을 위해 약간의 딜레이
+    setTimeout(() => {
+      setIsRefreshing(false);
+      setPullDistance(0);
+    }, 400); 
   };
 
   useEffect(() => {
     setIsMounted(true);
     fetchData();
 
-    // Intersection Observer: 차트 가시성 감지
-    const observer = new IntersectionObserver(
-      ([entry]) => setIsChartVisible(entry.isIntersecting),
-      { threshold: 0 }
-    );
-    if (chartRef.current) observer.observe(chartRef.current);
+    // 모바일 환경 감지
+    const ua = window.navigator.userAgent.toLowerCase();
+    const isIOS = /iphone|ipad|ipod/.test(ua);
+    const isAndroid = /android/.test(ua);
+    setUserAgent({ isIOS, isAndroid });
 
-    return () => observer.disconnect();
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
+    if ((isIOS || isAndroid) && !isStandalone) {
+      const timer = setTimeout(() => setShowInstallToast(true), 2000);
+      return () => clearTimeout(timer);
+    }
+
+    // [핵심] 스크롤 감지를 통한 스티키 서머리 토글
+    const handleScroll = () => {
+      // 150px 이상 스크롤 시 차트가 가려졌다고 판단
+      setIsChartVisible(window.scrollY < 150);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // --- 스크롤 및 터치 제어 ---
+  // --- [핵심] 정교한 터치 제어 로직 ---
   const handleTouchStart = (e: React.TouchEvent) => {
-    if (window.scrollY === 0) startY.current = e.touches[0].pageY;
+    if (isEditMode) return; // 수정 모드에서는 새로고침 금지
+    if (window.scrollY <= 0) {
+      isAtTopOnStart.current = true;
+      startY.current = e.touches[0].pageY;
+    } else {
+      isAtTopOnStart.current = false;
+    }
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
+    if (isEditMode || !isAtTopOnStart.current) return;
+    
     const touchY = e.touches[0].pageY;
     const diff = touchY - startY.current;
     
-    // 상단 바운스 (Pull-to-refresh 용도)
-    if (window.scrollY === 0 && diff > 0 && diff < 150) {
-      setPullDistance(diff);
+    // 오직 위에서 아래로 당길 때만 작동
+    if (window.scrollY <= 0 && diff > 0) {
+      setPullDistance(Math.min(diff * 0.4, 100)); // 0.4 마찰력 적용, 최대 100px
     }
   };
 
   const handleTouchEnd = () => {
-    if (pullDistance > 80) {
+    if (isEditMode || !isAtTopOnStart.current) return;
+    
+    if (pullDistance > 60) {
       setIsRefreshing(true);
+      setPullDistance(60); // 새로고침 도중에는 일정 높이 유지
       fetchData();
     } else {
       setPullDistance(0);
     }
+    isAtTopOnStart.current = false;
   };
 
   const commitChanges = async () => {
@@ -142,87 +173,98 @@ export default function Dashboard() {
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      className="min-h-screen bg-white text-slate-900 font-sans overflow-x-hidden pb-10 relative touch-pan-y overscroll-none"
+      className="min-h-screen bg-white text-slate-900 font-sans overflow-x-hidden pb-10 relative"
     >
-      {/* Pull to Refresh */}
+      {/* --- Pull to Refresh 애니메이션 (헤더 바로 아래) --- */}
       <div 
-        className="absolute w-full flex justify-center items-center overflow-hidden pointer-events-none z-[200]"
-        style={{ height: pullDistance, top: 0, transition: isRefreshing ? 'none' : 'height 0.2s' }}
+        className="fixed left-0 w-full flex justify-center items-end z-[140] pointer-events-none"
+        style={{ 
+          top: 'calc(60px + env(safe-area-inset-top))',
+          height: 60,
+          opacity: pullDistance > 0 || isRefreshing ? 1 : 0,
+          transform: `translateY(${Math.min(pullDistance - 60, 0)}px)`,
+          transition: isRefreshing || pullDistance === 0 ? 'transform 0.3s ease, opacity 0.3s' : 'none'
+        }}
       >
-        <div className="flex flex-col items-center gap-1 opacity-60">
-          <RefreshCcw size={20} className={`text-blue-600 ${isRefreshing ? 'animate-spin' : ''}`} style={{ transform: `rotate(${pullDistance * 2}deg)` }} />
+        <div className="flex flex-col items-center gap-1 opacity-80 pb-2">
+          <RefreshCcw size={20} className={`text-blue-600 ${isRefreshing ? 'animate-spin' : ''}`} style={{ transform: `rotate(${pullDistance * 3}deg)` }} />
           <p className="text-[10px] font-black italic uppercase tracking-tighter text-blue-600">
-            {pullDistance > 80 ? "Release" : "Pull"}
+            {pullDistance > 60 ? "Release" : "Pull down"}
           </p>
         </div>
       </div>
 
       {/* --- 1. Header & Sticky Summary --- */}
-      <header className="fixed top-0 left-0 w-full bg-white/95 backdrop-blur-md border-b z-[150] px-4 pt-[env(safe-area-inset-top)] flex flex-col shadow-sm">
-        <div className="h-[60px] flex justify-between items-center w-full">
+      <header className="fixed top-0 left-0 w-full bg-white/95 backdrop-blur-md border-b z-[150] flex flex-col transition-all">
+        <div className="h-[calc(60px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] px-4 flex justify-between items-center w-full">
           <div className="w-10" /> 
           <h1 className="text-xl font-black tracking-tighter text-blue-600 italic">PennyWise</h1>
           <button onClick={() => setIsMenuOpen(true)} className="p-3 -mr-2"><Menu size={26} className="text-slate-800" /></button>
         </div>
         
-        {/* [핵심] 차트가 사라졌을 때 나타나는 스티키 요약 바 */}
-        <AnimatePresence>
-          {!isChartVisible && (
-            <motion.div 
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden bg-slate-50/50"
-            >
-              <div className="px-4 py-2 flex justify-center gap-6 text-[11px] font-black tracking-tight border-t">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-blue-600" />
-                  <span className="text-slate-400 uppercase">Assets</span>
-                  <span className="text-blue-700">{(totalAssets / 10000).toLocaleString()}만</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-red-600" />
-                  <span className="text-slate-400 uppercase">Debt</span>
-                  <span className="text-red-700">{(totalLiabilities / 10000).toLocaleString()}만</span>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {/* 스티키 서머리 (CSS Transition으로 부드럽게) */}
+        <div 
+          className="overflow-hidden bg-slate-50/90 border-t border-slate-100"
+          style={{ 
+            maxHeight: isChartVisible ? 0 : '40px', 
+            opacity: isChartVisible ? 0 : 1,
+            transition: 'max-height 0.3s ease, opacity 0.3s ease'
+          }}
+        >
+          <div className="px-4 py-2.5 flex justify-center gap-6 text-[11px] font-black tracking-tight">
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-blue-600" />
+              <span className="text-slate-400 uppercase">Assets</span>
+              <span className="text-blue-700">{(totalAssets / 10000).toLocaleString()}만</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-red-600" />
+              <span className="text-slate-400 uppercase">Debt</span>
+              <span className="text-red-700">{(totalLiabilities / 10000).toLocaleString()}만</span>
+            </div>
+          </div>
+        </div>
       </header>
 
-      <main className="pt-[calc(75px+env(safe-area-inset-top))] pb-8 px-5 max-w-md mx-auto relative z-10">
-        
-        {/* --- 차트 영역 (관찰 대상) --- */}
-        <div ref={chartRef}>
-          <section className="bg-white rounded-3xl shadow-sm border border-slate-100 p-4 mb-6 relative">
-            <button 
-              onClick={() => isEditMode ? commitChanges() : setIsEditMode(true)} 
-              className={`absolute top-3 right-3 z-10 p-2.5 rounded-xl shadow-lg transition-all active:scale-95 ${isEditMode ? 'bg-green-600 text-white animate-bounce' : 'bg-slate-900 text-white'}`}
-            >
-              {isEditMode ? <Check size={18} strokeWidth={4} /> : <Edit2 size={16} strokeWidth={3} />}
-            </button>
-            
-            <div className="flex items-center justify-between h-40">
-              {loading ? <div className="w-full text-center text-slate-200 italic font-bold animate-pulse text-sm">Synchronizing...</div> : (
-                <>
-                  <div className="relative w-3/5 h-full">
-                    <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={totalData} innerRadius={55} outerRadius={75} paddingAngle={6} dataKey="value" stroke="none">{totalData.map((entry, i) => (<Cell key={i} fill={entry.color} />))}</Pie></PieChart></ResponsiveContainer>
-                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none">
-                      <p className="text-red-600 text-lg font-black leading-tight">{Math.round((totalLiabilities / (totalAssets + totalLiabilities || 1)) * 100)}%</p>
-                      <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">Debt Ratio</p>
-                    </div>
+      {/* --- 2. Main Content --- */}
+      <main 
+        className="px-5 max-w-md mx-auto relative z-10"
+        style={{ 
+          paddingTop: 'calc(75px + env(safe-area-inset-top))',
+          transform: `translateY(${pullDistance}px)`,
+          transition: isRefreshing || pullDistance === 0 ? 'transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)' : 'none'
+        }}
+      >
+        {/* 차트 영역 */}
+        <section className="bg-white rounded-3xl shadow-sm border border-slate-100 p-4 mb-6 relative">
+          <button 
+            onClick={() => isEditMode ? commitChanges() : setIsEditMode(true)} 
+            className={`absolute top-3 right-3 z-10 p-2.5 rounded-xl shadow-lg transition-all active:scale-95 ${isEditMode ? 'bg-green-600 text-white animate-bounce' : 'bg-slate-900 text-white'}`}
+          >
+            {isEditMode ? <Check size={18} strokeWidth={4} /> : <Edit2 size={16} strokeWidth={3} />}
+          </button>
+          
+          <div className="flex items-center justify-between h-40">
+            {loading ? <div className="w-full text-center text-slate-200 italic font-bold animate-pulse text-sm">Synchronizing...</div> : (
+              <>
+                <div className="relative w-3/5 h-full">
+                  <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={totalData} innerRadius={55} outerRadius={75} paddingAngle={6} dataKey="value" stroke="none">{totalData.map((entry, i) => (<Cell key={i} fill={entry.color} />))}</Pie></PieChart></ResponsiveContainer>
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none">
+                    <p className="text-red-600 text-lg font-black leading-tight">{Math.round((totalLiabilities / (totalAssets + totalLiabilities || 1)) * 100)}%</p>
+                    <p className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">Debt Ratio</p>
                   </div>
-                  <div className="w-2/5 flex flex-col gap-3 pl-4 border-l font-black text-sm text-center">
-                    <div><p className="text-[10px] text-slate-400 uppercase tracking-tighter">Assets</p><p>{(totalAssets / 10000).toLocaleString()}만</p></div>
-                    <div><p className="text-[10px] text-slate-400 uppercase tracking-tighter">Debt</p><p>{(totalLiabilities / 10000).toLocaleString()}만</p></div>
-                  </div>
-                </>
-              )}
-            </div>
-          </section>
-        </div>
+                </div>
+                <div className="w-2/5 flex flex-col gap-3 pl-4 border-l font-black text-sm text-center">
+                  <div><p className="text-[10px] text-slate-400 uppercase tracking-tighter">Assets</p><p>{(totalAssets / 10000).toLocaleString()}만</p></div>
+                  <div><p className="text-[10px] text-slate-400 uppercase tracking-tighter">Debt</p><p>{(totalLiabilities / 10000).toLocaleString()}만</p></div>
+                </div>
+              </>
+            )}
+          </div>
+          {isEditMode && <p className="text-[9px] text-center font-bold text-green-600 mt-2 animate-pulse uppercase tracking-widest">Editing Mode: Press Check to Save all</p>}
+        </section>
 
+        {/* 리스트 영역 */}
         <div className="space-y-6">
           {[ { title: '자산 내역', data: details.assets, icon: <Wallet size={16}/>, color: 'blue' }, { title: '부채 내역', data: details.liabilities, icon: <Landmark size={16}/>, color: 'red' } ].map((sec) => (
             <div key={sec.title}>
@@ -250,7 +292,41 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {/* Side Menu & Modal & Install Toast (로직 유지) */}
+      {/* --- 사이드 메뉴, 설치 토스트, 모달 --- */}
+      <AnimatePresence>
+        {isMenuOpen && (
+          <div className="fixed inset-0 z-[250] flex justify-end">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsMenuOpen(false)} />
+            <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 200 }} className="relative w-[75%] max-w-sm h-full bg-white shadow-2xl p-6 pt-[calc(20px+env(safe-area-inset-top))] flex flex-col">
+              <button className="self-start mb-10 p-3 -ml-2 rounded-full" onClick={() => setIsMenuOpen(false)}><X size={26} /></button>
+              <nav className="flex flex-col gap-8 text-xl font-bold">
+                <button className="flex items-center justify-between py-1 text-left" onClick={() => { setIsMenuOpen(false); fetchData(); }}>
+                   <span>새로고침</span> <RefreshCcw size={20} className="text-slate-300" />
+                </button>
+              </nav>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showInstallToast && (
+          <div className="fixed inset-0 z-[400] flex items-center justify-center px-6 pointer-events-none">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm pointer-events-auto" onClick={() => setShowInstallToast(false)} />
+            <motion.div initial={{ scale: 0.8, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.8, opacity: 0, y: 20 }} className="relative w-full max-w-sm bg-slate-900 text-white p-6 rounded-3xl shadow-2xl flex flex-col items-center border border-white/10 pointer-events-auto text-center">
+              <div className="bg-blue-600 p-4 rounded-full mb-5 shadow-inner"><Download size={28} className="text-white" /></div>
+              <h3 className="text-xl font-black text-white mb-2">PennyWise 앱 설치</h3>
+              <p className="text-sm text-slate-300 font-bold tracking-tight mb-6">바탕화면에 추가하여 더 빠르고 편리하게 자산을 관리하세요!</p>
+              <div className="w-full space-y-3 bg-slate-800 p-4 rounded-2xl border border-slate-700 mb-6">
+                {userAgent.isIOS && <div className="flex items-center gap-3 justify-center text-sm font-black text-blue-400"><Apple size={20} className="shrink-0" /><span>Safari: 공유 {'>'} 홈 화면 추가</span></div>}
+                {userAgent.isAndroid && <div className="flex items-center gap-3 justify-center text-sm font-black text-green-400"><Info size={18} className="shrink-0" /><span>Chrome: 메뉴 {'>'} 설치</span></div>}
+              </div>
+              <button onClick={() => setShowInstallToast(false)} className="w-full bg-slate-700 text-white py-3.5 rounded-xl font-black shadow-md active:scale-95 transition-all text-xs">닫기</button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {isModalOpen && (
           <div className="fixed inset-0 z-[300] flex items-end justify-center">
@@ -280,11 +356,10 @@ export default function Dashboard() {
       </AnimatePresence>
 
       <style jsx global>{`
-        /* [핵심] 하단 및 전체 바운스 제거 */
+        /* [핵심] 네이티브 스크롤 유지, 바운스만 제거 */
         html, body { 
           background-color: white !important; 
-          overscroll-behavior: none; /* 전체 바운스 방지 */
-          height: 100%;
+          overscroll-behavior-y: none; 
         }
         .no-scrollbar::-webkit-scrollbar { display: none; }
       `}</style>
