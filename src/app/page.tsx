@@ -26,7 +26,7 @@ export default function Dashboard() {
   const [isChartVisible, setIsChartVisible] = useState(true);
   
   const startY = useRef(0);
-  const isAtTopOnStart = useRef(false); // [핵심] 터치 시작 시 최상단 여부 확인
+  const isAtTopOnStart = useRef(false);
 
   // PWA 안내
   const [showInstallToast, setShowInstallToast] = useState(false);
@@ -46,7 +46,6 @@ export default function Dashboard() {
     }
     setLoading(false);
     
-    // 새로고침 완료 후 애니메이션을 위해 약간의 딜레이
     setTimeout(() => {
       setIsRefreshing(false);
       setPullDistance(0);
@@ -57,7 +56,6 @@ export default function Dashboard() {
     setIsMounted(true);
     fetchData();
 
-    // 모바일 환경 감지
     const ua = window.navigator.userAgent.toLowerCase();
     const isIOS = /iphone|ipad|ipod/.test(ua);
     const isAndroid = /android/.test(ua);
@@ -69,18 +67,13 @@ export default function Dashboard() {
       return () => clearTimeout(timer);
     }
 
-    // [핵심] 스크롤 감지를 통한 스티키 서머리 토글
-    const handleScroll = () => {
-      // 150px 이상 스크롤 시 차트가 가려졌다고 판단
-      setIsChartVisible(window.scrollY < 150);
-    };
+    const handleScroll = () => setIsChartVisible(window.scrollY < 150);
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // --- [핵심] 정교한 터치 제어 로직 ---
   const handleTouchStart = (e: React.TouchEvent) => {
-    if (isEditMode) return; // 수정 모드에서는 새로고침 금지
+    if (isEditMode) return; 
     if (window.scrollY <= 0) {
       isAtTopOnStart.current = true;
       startY.current = e.touches[0].pageY;
@@ -91,22 +84,18 @@ export default function Dashboard() {
 
   const handleTouchMove = (e: React.TouchEvent) => {
     if (isEditMode || !isAtTopOnStart.current) return;
-    
     const touchY = e.touches[0].pageY;
     const diff = touchY - startY.current;
-    
-    // 오직 위에서 아래로 당길 때만 작동
     if (window.scrollY <= 0 && diff > 0) {
-      setPullDistance(Math.min(diff * 0.4, 100)); // 0.4 마찰력 적용, 최대 100px
+      setPullDistance(Math.min(diff * 0.4, 100));
     }
   };
 
   const handleTouchEnd = () => {
     if (isEditMode || !isAtTopOnStart.current) return;
-    
     if (pullDistance > 60) {
       setIsRefreshing(true);
-      setPullDistance(60); // 새로고침 도중에는 일정 높이 유지
+      setPullDistance(60); 
       fetchData();
     } else {
       setPullDistance(0);
@@ -173,9 +162,9 @@ export default function Dashboard() {
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
-      className="min-h-screen bg-white text-slate-900 font-sans overflow-x-hidden pb-10 relative"
+      className="min-h-screen bg-white text-slate-900 font-sans overflow-x-hidden pb-24 relative"
     >
-      {/* --- Pull to Refresh 애니메이션 (헤더 바로 아래) --- */}
+      {/* Pull to Refresh */}
       <div 
         className="fixed left-0 w-full flex justify-center items-end z-[140] pointer-events-none"
         style={{ 
@@ -194,39 +183,25 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* --- 1. Header & Sticky Summary --- */}
+      {/* Header & Sticky Summary */}
       <header className="fixed top-0 left-0 w-full bg-white/95 backdrop-blur-md border-b z-[150] flex flex-col transition-all">
         <div className="h-[calc(60px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] px-4 flex justify-between items-center w-full">
           <div className="w-10" /> 
           <h1 className="text-xl font-black tracking-tighter text-blue-600 italic">PennyWise</h1>
           <button onClick={() => setIsMenuOpen(true)} className="p-3 -mr-2"><Menu size={26} className="text-slate-800" /></button>
         </div>
-        
-        {/* 스티키 서머리 (CSS Transition으로 부드럽게) */}
         <div 
           className="overflow-hidden bg-slate-50/90 border-t border-slate-100"
-          style={{ 
-            maxHeight: isChartVisible ? 0 : '40px', 
-            opacity: isChartVisible ? 0 : 1,
-            transition: 'max-height 0.3s ease, opacity 0.3s ease'
-          }}
+          style={{ maxHeight: isChartVisible ? 0 : '40px', opacity: isChartVisible ? 0 : 1, transition: 'max-height 0.3s ease, opacity 0.3s ease' }}
         >
           <div className="px-4 py-2.5 flex justify-center gap-6 text-[11px] font-black tracking-tight">
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-blue-600" />
-              <span className="text-slate-400 uppercase">Assets</span>
-              <span className="text-blue-700">{(totalAssets / 10000).toLocaleString()}만</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-red-600" />
-              <span className="text-slate-400 uppercase">Debt</span>
-              <span className="text-red-700">{(totalLiabilities / 10000).toLocaleString()}만</span>
-            </div>
+            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /><span className="text-slate-400 uppercase">Assets</span><span className="text-blue-700">{(totalAssets / 10000).toLocaleString()}만</span></div>
+            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-600" /><span className="text-slate-400 uppercase">Debt</span><span className="text-red-700">{(totalLiabilities / 10000).toLocaleString()}만</span></div>
           </div>
         </div>
       </header>
 
-      {/* --- 2. Main Content --- */}
+      {/* Main Content */}
       <main 
         className="px-5 max-w-md mx-auto relative z-10"
         style={{ 
@@ -235,15 +210,7 @@ export default function Dashboard() {
           transition: isRefreshing || pullDistance === 0 ? 'transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)' : 'none'
         }}
       >
-        {/* 차트 영역 */}
         <section className="bg-white rounded-3xl shadow-sm border border-slate-100 p-4 mb-6 relative">
-          <button 
-            onClick={() => isEditMode ? commitChanges() : setIsEditMode(true)} 
-            className={`absolute top-3 right-3 z-10 p-2.5 rounded-xl shadow-lg transition-all active:scale-95 ${isEditMode ? 'bg-green-600 text-white animate-bounce' : 'bg-slate-900 text-white'}`}
-          >
-            {isEditMode ? <Check size={18} strokeWidth={4} /> : <Edit2 size={16} strokeWidth={3} />}
-          </button>
-          
           <div className="flex items-center justify-between h-40">
             {loading ? <div className="w-full text-center text-slate-200 italic font-bold animate-pulse text-sm">Synchronizing...</div> : (
               <>
@@ -261,10 +228,8 @@ export default function Dashboard() {
               </>
             )}
           </div>
-          {isEditMode && <p className="text-[9px] text-center font-bold text-green-600 mt-2 animate-pulse uppercase tracking-widest">Editing Mode: Press Check to Save all</p>}
         </section>
 
-        {/* 리스트 영역 */}
         <div className="space-y-6">
           {[ { title: '자산 내역', data: details.assets, icon: <Wallet size={16}/>, color: 'blue' }, { title: '부채 내역', data: details.liabilities, icon: <Landmark size={16}/>, color: 'red' } ].map((sec) => (
             <div key={sec.title}>
@@ -292,7 +257,31 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {/* --- 사이드 메뉴, 설치 토스트, 모달 --- */}
+      {/* --- [핵심] 플로팅 액션 버튼 (FAB) --- */}
+      <div className="fixed bottom-6 right-5 z-[140] flex flex-col items-end gap-2 pointer-events-none">
+        <AnimatePresence>
+          {isEditMode && (
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.9 }}
+              className="bg-green-100 text-green-800 border border-green-200 text-[10px] font-black px-3 py-1.5 rounded-full shadow-sm pointer-events-auto"
+            >
+              SAVE CHANGES
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <button
+          onClick={() => isEditMode ? commitChanges() : setIsEditMode(true)}
+          className={`p-4 rounded-full shadow-2xl transition-all active:scale-90 pointer-events-auto flex items-center justify-center ${
+            isEditMode ? 'bg-green-600 text-white animate-bounce' : 'bg-slate-900 text-white'
+          }`}
+        >
+          {isEditMode ? <Check size={24} strokeWidth={3} /> : <Edit2 size={24} strokeWidth={2.5} />}
+        </button>
+      </div>
+
+      {/* 사이드 메뉴, 설치 토스트, 모달 */}
       <AnimatePresence>
         {isMenuOpen && (
           <div className="fixed inset-0 z-[250] flex justify-end">
@@ -356,7 +345,6 @@ export default function Dashboard() {
       </AnimatePresence>
 
       <style jsx global>{`
-        /* [핵심] 네이티브 스크롤 유지, 바운스만 제거 */
         html, body { 
           background-color: white !important; 
           overscroll-behavior-y: none; 
