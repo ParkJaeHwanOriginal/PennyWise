@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Menu, X, Edit2, ChevronRight, Wallet, Landmark, Plus, Check, Lock, Unlock, Trash2, Share, Download } from 'lucide-react';
+import { Menu, X, Edit2, ChevronRight, Wallet, Landmark, Plus, Check, Lock, Unlock, Trash2, Download, Apple, Info } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
@@ -16,8 +16,9 @@ export default function Dashboard() {
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   
-  // PWA 설치 안내 상태
-  const [showInstallPrompt, setShowInstallPrompt] = useState(false);
+  // PWA 설치 안내 상태 (기본값 false)
+  const [showInstallToast, setShowInstallToast] = useState(false);
+  const [userAgent, setUserAgent] = useState({ isIOS: false, isAndroid: false });
 
   const [details, setDetails] = useState({ assets: [] as any[], liabilities: [] as any[] });
 
@@ -38,14 +39,19 @@ export default function Dashboard() {
     setIsMounted(true);
     fetchData();
 
-    // --- PWA 설치 여부 확인 로직 ---
+    // --- 모바일 환경 및 설치 여부 확인 로직 ---
+    const ua = window.navigator.userAgent.toLowerCase();
+    const isIOS = /iphone|ipad|ipod/.test(ua);
+    const isAndroid = /android/.test(ua);
+    setUserAgent({ isIOS, isAndroid });
+
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches 
                        || (window.navigator as any).standalone 
                        || document.referrer.includes('android-app://');
     
-    // 설치되지 않은 상태로 브라우저 접속 시 3초 후 팝업 노출
-    if (!isStandalone) {
-      const timer = setTimeout(() => setShowInstallPrompt(true), 3000);
+    // 모바일 브라우저에서 설치되지 않은 상태로 접속 시 2초 후 토스트 노출
+    if ((isIOS || isAndroid) && !isStandalone) {
+      const timer = setTimeout(() => setShowInstallToast(true), 2000);
       return () => clearTimeout(timer);
     }
   }, []);
@@ -85,7 +91,7 @@ export default function Dashboard() {
   if (!isMounted) return null;
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans overflow-x-hidden pb-20">
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans overflow-x-hidden pb-10 relative">
       
       {/* --- 1. Header --- */}
       <header className="fixed top-0 left-0 w-full bg-white/90 backdrop-blur-md border-b z-[150] px-4 pt-[env(safe-area-inset-top)] h-[calc(60px+env(safe-area-inset-top))] flex justify-between items-center shadow-sm">
@@ -155,30 +161,58 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {/* --- 4. PWA 설치 유도 플로팅 바 (최하단) --- */}
+      {/* --- 4. [요청 반영] 중앙 배치 PWA 설치 안내 토스트 --- */}
       <AnimatePresence>
-        {showInstallPrompt && (
-          <motion.div 
-            initial={{ y: 100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 100, opacity: 0 }}
-            className="fixed bottom-6 left-5 right-5 z-[400] bg-slate-900 text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between border border-white/10"
-          >
-            <div className="flex items-center gap-3">
-              <div className="bg-blue-600 p-2 rounded-xl"><Download size={20} className="text-white" /></div>
-              <div>
-                <p className="text-xs font-black leading-tight">PennyWise 앱 설치</p>
-                <p className="text-[10px] text-slate-400 font-bold tracking-tighter">바탕화면에 추가하여 더 편하게 사용하세요!</p>
+        {showInstallToast && (
+          <div className="fixed inset-0 z-[400] flex items-center justify-center px-6 py-20 pointer-events-none">
+            {/* 오버레이 (클릭 시 닫힘) */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm pointer-events-auto" 
+              onClick={() => setShowInstallToast(false)} 
+            />
+            
+            {/* 토스트 본체 (중앙 배치) */}
+            <motion.div 
+              initial={{ scale: 0.8, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.8, opacity: 0, y: 20 }}
+              transition={{ type: "spring", damping: 20, stiffness: 300 }}
+              className="relative w-full max-w-sm bg-slate-900 text-white p-6 rounded-3xl shadow-2xl flex flex-col items-center border border-white/10 pointer-events-auto text-center"
+            >
+              <div className="bg-blue-600 p-4 rounded-full mb-5 shadow-inner"><Download size={28} className="text-white" /></div>
+              
+              <h3 className="text-xl font-black text-white mb-2">PennyWise 앱 설치</h3>
+              <p className="text-sm text-slate-300 font-bold tracking-tight mb-6">바탕화면에 추가하여 더 빠르고 편리하게 자산을 관리하세요!</p>
+              
+              {/* 기기별 간결한 안내 */}
+              <div className="w-full space-y-3 bg-slate-800 p-4 rounded-2xl border border-slate-700 mb-6">
+                {userAgent.isIOS && (
+                  <div className="flex items-center gap-3 justify-center text-sm font-black text-blue-400">
+                    <Apple size={20} className="shrink-0" />
+                    <span>Safari: 공유 icon {'>'} 홈 화면 추가</span>
+                  </div>
+                )}
+                {userAgent.isAndroid && (
+                  <div className="flex items-center gap-3 justify-center text-sm font-black text-green-400">
+                    <Info size={18} className="shrink-0" />
+                    <span>Chrome: 메뉴 {'>'} 앱 설치 (또는 홈 화면 추가)</span>
+                  </div>
+                )}
               </div>
-            </div>
-            <div className="flex items-center gap-2">
-              {/* 아이폰용 안내 */}
-              <div className="hidden sm:block text-[10px] font-bold text-blue-400 bg-blue-400/10 px-2 py-1 rounded-md">
-                Safari: 공유 {'>'} 홈 화면 추가
-              </div>
-              <button onClick={() => setShowInstallPrompt(false)} className="p-2 text-slate-500 hover:text-white transition-colors"><X size={18} /></button>
-            </div>
-          </motion.div>
+              
+              <button 
+                onClick={() => setShowInstallToast(false)} 
+                className="w-full bg-slate-700 text-white py-3.5 rounded-xl font-black shadow-md active:scale-95 transition-all mt-2 uppercase tracking-widest text-xs"
+              >
+                닫기
+              </button>
+              
+              <button onClick={() => setShowInstallToast(false)} className="absolute top-4 right-4 p-2 text-slate-500 hover:text-white transition-colors"><X size={18} /></button>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
