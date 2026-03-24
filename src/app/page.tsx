@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Edit2, ChevronRight, Wallet, Landmark, Plus, Check, Lock, Unlock, Trash2, RefreshCcw, PieChartIcon, BookOpen, ChevronLeft, GripVertical, Pencil, Calculator, X, Calendar } from 'lucide-react';
+import { Edit2, ChevronRight, Wallet, Landmark, Plus, Check, Lock, Unlock, Trash2, RefreshCcw, PieChartIcon, BookOpen, ChevronLeft, GripVertical, Pencil, Calculator, X, Calendar, Delete } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, Tooltip } from 'recharts';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
@@ -19,6 +19,13 @@ const getAccountName = (key: string) => {
 
 export default function Dashboard() {
   const [isMounted, setIsMounted] = useState(false);
+  
+  // [NEW] Auth & Splash States
+  const [showSplash, setShowSplash] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [pinCode, setPinCode] = useState("");
+  const [pinError, setPinError] = useState(false);
+
   const [activeTab, setActiveTab] = useState<'dashboard' | 'ledger' | 'budget'>('dashboard');
   
   // Dates
@@ -58,6 +65,10 @@ export default function Dashboard() {
   const startY = useRef(0);
   const isAtTopOnStart = useRef(false);
   const [isChartVisible, setIsChartVisible] = useState(true);
+
+  // Initial Render Refs (To prevent double fetching on mount)
+  const isFirstRender = useRef(true);
+  const isFirstBudgetRender = useRef(true);
 
   const fetchMainData = async () => {
     setLoading(true);
@@ -105,14 +116,33 @@ export default function Dashboard() {
     setFixedExpenses(expensesData || []);
   };
 
-  useEffect(() => { setIsMounted(true); fetchMainData(); }, [currentDate]);
-  useEffect(() => { if (isMounted) fetchBudgetData(); }, [budgetMonthStr, isMounted]);
-
+  // --- [NEW] App Initialization & Splash Screen ---
   useEffect(() => {
+    setIsMounted(true);
+    
+    // 최소 1.5초 대기 + 데이터 로딩 병렬 처리
+    const initApp = async () => {
+      const minSplashTime = new Promise(resolve => setTimeout(resolve, 1500));
+      await Promise.all([fetchMainData(), fetchBudgetData(), minSplashTime]);
+      setShowSplash(false);
+    };
+    initApp();
+
     const handleScroll = () => setIsChartVisible(window.scrollY < 150);
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
+
+  // 날짜/달 변경 시 리렌더링 방어 로직
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    fetchMainData();
+  }, [currentDate]);
+
+  useEffect(() => {
+    if (isFirstBudgetRender.current) { isFirstBudgetRender.current = false; return; }
+    fetchBudgetData();
+  }, [budgetMonthStr]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     if (isEditMode) return; 
@@ -129,15 +159,34 @@ export default function Dashboard() {
     isAtTopOnStart.current = false;
   };
 
-  // --- [핵심] ISA Calculations 완벽 수정 ---
-  const isaBase = ledger.isa || 0;                 // 가계부에서 수기로 입력한 '현재 잔액(기본금)'
-  const isaDeposit = ledger.isa_deposit || 0;      // 가계부 모달에서 입력한 '예수금'
-  const isaProfit = ledger.isa_profit || 0;        // 가계부 모달에서 입력한 '수익'
+  // --- [NEW] PIN Pad Logic ---
+  const handlePinClick = (num: string) => {
+    if (pinCode.length < 4) {
+      const newPin = pinCode + num;
+      setPinCode(newPin);
+      if (newPin.length === 4) {
+        if (newPin === "0519") {
+          setTimeout(() => setIsAuthenticated(true), 200);
+        } else {
+          setPinError(true);
+          setTimeout(() => { setPinCode(""); setPinError(false); }, 500);
+        }
+      }
+    }
+  };
 
-  const isaPrincipal = isaBase + isaDeposit;       // 원금만 = 기본금 + 예수금
-  const isaTotal = isaPrincipal + isaProfit;       // 수익 포함 = 원금만 + 수익
+  const handlePinDelete = () => {
+    if (pinCode.length > 0) setPinCode(prev => prev.slice(0, -1));
+  };
 
-  // --- Total Calculations ---
+  // --- Calculations ---
+  const isaBase = ledger.isa || 0; 
+  const isaDeposit = ledger.isa_deposit || 0; 
+  const isaProfit = ledger.isa_profit || 0; 
+
+  const isaPrincipal = isaBase + isaDeposit; 
+  const isaTotal = isaPrincipal + isaProfit; 
+
   const totalAssets = details.assets.reduce((acc, cur) => {
     if (cur.name.toUpperCase() === 'ISA') return acc + isaTotal; 
     return acc + cur.amount;
@@ -277,411 +326,468 @@ export default function Dashboard() {
   if (!isMounted) return null;
 
   return (
-    <div onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd} className="min-h-screen bg-slate-50 text-slate-900 font-sans overflow-x-hidden pb-24 relative">
-      {/* Pull to Refresh */}
-      <div className="fixed left-0 w-full flex justify-center items-end z-[140] pointer-events-none" style={{ top: 'calc(60px + env(safe-area-inset-top))', height: 60, opacity: pullDistance > 0 || isRefreshing ? 1 : 0, transform: `translateY(${Math.min(pullDistance - 60, 0)}px)`, transition: isRefreshing || pullDistance === 0 ? 'transform 0.3s ease, opacity 0.3s' : 'none' }}>
-        <div className="flex flex-col items-center gap-1 opacity-80 pb-2"><RefreshCcw size={20} className={`text-blue-600 ${isRefreshing ? 'animate-spin' : ''}`} style={{ transform: `rotate(${pullDistance * 3}deg)` }} /></div>
-      </div>
-
-      <header className="fixed top-0 left-0 w-full bg-white/95 backdrop-blur-md border-b z-[150] flex flex-col transition-all shadow-sm">
-        <div className="h-[calc(60px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] px-4 flex justify-center items-center w-full">
-          <h1 className="text-xl font-black tracking-tighter text-blue-600 italic">PennyWise</h1>
-        </div>
-        <div className="overflow-hidden bg-slate-50/90 border-t border-slate-100" style={{ maxHeight: isChartVisible || activeTab !== 'dashboard' ? 0 : '40px', opacity: isChartVisible || activeTab !== 'dashboard' ? 0 : 1, transition: 'max-height 0.3s ease, opacity 0.3s ease' }}>
-          <div className="px-4 py-2.5 flex justify-center gap-6 text-[11px] font-black tracking-tight">
-            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /><span className="text-slate-400 uppercase">Assets</span><span className="text-blue-700">{(totalAssets / 10000).toLocaleString()}만</span></div>
-            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-600" /><span className="text-slate-400 uppercase">Debt</span><span className="text-red-700">{(totalLiabilities / 10000).toLocaleString()}만</span></div>
-          </div>
-        </div>
-      </header>
-
-      <main className="px-5 max-w-md mx-auto relative z-10" style={{ paddingTop: 'calc(75px + env(safe-area-inset-top))', transform: `translateY(${pullDistance}px)`, transition: isRefreshing || pullDistance === 0 ? 'transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)' : 'none' }}>
-        
-        {/* ==================== TAB 1: Dashboard ==================== */}
-        {activeTab === 'dashboard' && (
-          <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
-            <section className="bg-white rounded-3xl shadow-sm border border-slate-100 p-4 mb-6 relative">
-              <div className="flex items-center justify-between h-40">
-                {loading ? <div className="w-full text-center text-slate-200 italic font-bold">Syncing...</div> : (
-                  <>
-                    <div className="relative w-3/5 h-full">
-                      <ResponsiveContainer><PieChart><Pie data={totalData} innerRadius={55} outerRadius={75} paddingAngle={6} dataKey="value" stroke="none">{totalData.map((entry, i) => (<Cell key={i} fill={entry.color} />))}</Pie></PieChart></ResponsiveContainer>
-                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none">
-                        <p className="text-red-600 text-lg font-black leading-tight">{Math.round((totalLiabilities / (totalAssets + totalLiabilities || 1)) * 100)}%</p>
-                      </div>
-                    </div>
-                    <div className="w-2/5 flex flex-col gap-3 pl-4 border-l font-black text-sm text-center">
-                      <div><p className="text-[10px] text-slate-400 uppercase tracking-tighter">Assets</p><p>{(totalAssets / 10000).toLocaleString()}만</p></div>
-                      <div><p className="text-[10px] text-slate-400 uppercase tracking-tighter">Debt</p><p>{(totalLiabilities / 10000).toLocaleString()}만</p></div>
-                    </div>
-                  </>
-                )}
+    <>
+      {/* ==================== 0. 스플래시 화면 오버레이 ==================== */}
+      <AnimatePresence>
+        {showSplash && (
+          <motion.div 
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0, scale: 1.05 }}
+            transition={{ duration: 0.6, ease: "easeInOut" }}
+            className="fixed inset-0 z-[9999] bg-blue-600 flex flex-col items-center justify-center text-white"
+          >
+            <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.5, delay: 0.2 }} className="flex flex-col items-center">
+              <div className="w-20 h-20 bg-white/20 rounded-3xl backdrop-blur-md flex items-center justify-center mb-6 shadow-2xl">
+                <Wallet size={40} className="text-white" />
               </div>
-              <div className="mt-4 bg-blue-50/50 rounded-2xl p-4 flex justify-between items-center border border-blue-100/50">
-                <span className="text-xs font-black text-blue-600 tracking-tighter">총자산규모 (자산+부채)</span>
-                <span className="text-xl font-black text-slate-800">{(totalAssets + totalLiabilities).toLocaleString()}원</span>
-              </div>
-            </section>
-
-            <div className="space-y-6">
-              {[ { title: '자산 내역', data: details.assets, icon: <Wallet size={16}/>, color: 'blue' }, { title: '부채 내역', data: details.liabilities, icon: <Landmark size={16}/>, color: 'red' } ].map((sec) => (
-                <div key={sec.title}>
-                  <div className="flex items-center justify-between mb-3 px-1">
-                    <div className="flex items-center gap-2"><div className={`p-1.5 rounded-lg ${sec.color === 'blue' ? 'bg-blue-100 text-blue-600' : 'bg-red-100 text-red-600'}`}>{sec.icon}</div><h3 className="font-black text-lg italic">{sec.title}</h3></div>
-                    {isEditMode && <button onClick={() => { setSelectedItem({ type: sec.title.includes('자산') ? '자산' : '부채', isNew: true }); setIsModalOpen(true); }} className={`p-1.5 rounded-full shadow-md active:scale-90 transition-all ${sec.color === 'blue' ? 'bg-blue-600 text-white' : 'bg-red-600 text-white'}`}><Plus size={16}/></button>}
-                  </div>
-                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex flex-col">
-                     {sec.data.length === 0 ? <div className="p-8 text-center text-slate-300 font-bold text-xs italic">Empty</div> : sec.data.map(item => {
-                       
-                       const isISA = item.name.toUpperCase() === 'ISA';
-                       // [핵심] 토글에 따라 isaTotal 또는 isaPrincipal 출력
-                       const displayAmount = isISA ? (showIsaProfit ? isaTotal : isaPrincipal) : item.amount;
-                       
-                       return (
-                         <div key={item.id} onClick={() => { setSelectedItem(item); setIsModalOpen(true); }} className={`flex justify-between items-center p-4 border-b last:border-0 border-slate-50 ${isEditMode ? 'bg-blue-50/20 active:bg-blue-100' : 'active:bg-slate-50'}`}>
-                           <div className="flex flex-col">
-                             <span className="text-[10px] font-black text-slate-400">{item.bank || '기타'}</span>
-                             <div className="flex items-center gap-2">
-                               <span className="font-bold text-sm">{item.name}</span>
-                               {isISA && (
-                                 <button onClick={(e) => { e.stopPropagation(); setShowIsaProfit(!showIsaProfit); }} className="active:scale-95 transition-transform">
-                                   {showIsaProfit ? <span className="text-[9px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded shadow-sm font-bold border border-blue-200">수익 포함</span> : <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded shadow-sm font-bold border border-slate-200">원금만</span>}
-                                 </button>
-                               )}
-                             </div>
-                           </div>
-                           <div className="flex items-center gap-2"><span className="font-black text-base">{displayAmount.toLocaleString()}원</span>{isEditMode && <ChevronRight size={14} className="text-blue-400" />}</div>
-                         </div>
-                       );
-                     })}
-                  </div>
-                </div>
-              ))}
-            </div>
+              <h1 className="text-4xl font-black italic tracking-tighter mb-2">PennyWise</h1>
+              <p className="text-blue-200 text-[10px] tracking-[0.3em] uppercase font-bold">Smart Asset Manager</p>
+            </motion.div>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.8 }} className="absolute bottom-16 flex flex-col items-center">
+              <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin mb-4" />
+              <p className="text-[9px] text-blue-300 font-bold uppercase tracking-widest">Loading Data...</p>
+            </motion.div>
           </motion.div>
         )}
+      </AnimatePresence>
 
-        {/* ==================== TAB 2: Ledger ==================== */}
-        {activeTab === 'ledger' && (
-          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
-            <div className="flex justify-between items-center bg-white p-3 rounded-2xl shadow-sm border border-slate-100">
-              <button onClick={() => setCurrentDate(new Date(currentDate.setDate(currentDate.getDate() - 1)))} className="p-2 active:bg-slate-100 rounded-full"><ChevronLeft size={20}/></button>
-              <h2 className="font-black text-slate-800 tracking-tighter">{formatDate(currentDate)}</h2>
-              <button onClick={() => setCurrentDate(new Date(currentDate.setDate(currentDate.getDate() + 1)))} className="p-2 active:bg-slate-100 rounded-full"><ChevronRight size={20}/></button>
+      {/* ==================== 1. 인증 안된 상태 (비밀번호 잠금화면) ==================== */}
+      {!isAuthenticated ? (
+        <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white pb-20 relative z-[9000]">
+          <div className="mb-12 text-center flex flex-col items-center">
+            <div className="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(59,130,246,0.3)]">
+              <Lock size={32} className="text-blue-400" />
             </div>
+            <h2 className="text-sm font-bold tracking-[0.3em] text-slate-400 uppercase">Enter PIN Code</h2>
+          </div>
 
-            <section className="bg-white rounded-3xl shadow-sm border border-slate-100 p-4 relative h-[220px] flex flex-col overflow-hidden">
-              <div className="flex justify-between items-end mb-2 relative z-10">
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-tighter">최종 여윳돈 흐름</h3>
-                <p className="text-xl font-black text-blue-600">{finalSpareMoney.toLocaleString()}원</p>
-              </div>
-              <div className="flex-1 -ml-6 -mb-2 relative">
-                {isChartDataValid ? (
-                  <ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><XAxis dataKey="name" hide /><Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px', fontWeight: 'bold' }}/><Line type="monotone" dataKey="value" stroke="#2563eb" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6 }} /></LineChart></ResponsiveContainer>
-                ) : (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2"><BookOpen size={24} className="text-slate-200" /><p className="text-slate-400 font-bold text-xs tracking-tighter">가계부를 작성해 주세요</p></div>
-                )}
-              </div>
-            </section>
+          <motion.div animate={pinError ? { x: [-10, 10, -10, 10, 0] } : {}} transition={{ duration: 0.4 }} className="flex gap-6 mb-16">
+            {[0, 1, 2, 3].map(i => (
+              <div key={i} className={`w-4 h-4 rounded-full border-2 transition-all duration-200 ${pinCode.length > i ? 'bg-blue-500 border-blue-500 scale-110 shadow-[0_0_15px_rgba(59,130,246,0.5)]' : 'border-slate-600'}`} />
+            ))}
+          </motion.div>
 
-            <section>
-              <h3 className="font-black text-lg italic mb-3 px-1 text-slate-700">증권</h3>
-              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                <div onClick={() => openLedgerModal('isa')} className="flex justify-between items-center p-4 active:bg-slate-50 transition-colors cursor-pointer">
-                  <span className="font-bold text-sm text-slate-600">ISA</span>
-                  <div className="flex items-center gap-2"><span className="font-black text-slate-800">{isaTotal.toLocaleString()}원</span><ChevronRight size={14} className="text-slate-300" /></div>
-                </div>
-              </div>
-            </section>
+          <div className="grid grid-cols-3 gap-x-10 gap-y-6">
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
+              <button key={num} onClick={() => handlePinClick(num.toString())} className="w-20 h-20 rounded-full bg-slate-800 text-3xl font-bold active:bg-slate-700 active:scale-95 transition-all flex items-center justify-center shadow-sm">
+                {num}
+              </button>
+            ))}
+            <div />
+            <button onClick={() => handlePinClick('0')} className="w-20 h-20 rounded-full bg-slate-800 text-3xl font-bold active:bg-slate-700 active:scale-95 transition-all flex items-center justify-center shadow-sm">
+              0
+            </button>
+            <button onClick={handlePinDelete} className="w-20 h-20 rounded-full bg-slate-800/50 text-xl font-bold active:bg-slate-700 active:scale-95 transition-all flex items-center justify-center text-slate-400 hover:text-white">
+              <Delete size={28} />
+            </button>
+          </div>
+        </div>
+      ) : (
+        /* ==================== 2. 인증 완료된 상태 (메인 앱) ==================== */
+        <div onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd} className="min-h-screen bg-slate-50 text-slate-900 font-sans overflow-x-hidden pb-24 relative">
+          {/* Pull to Refresh */}
+          <div className="fixed left-0 w-full flex justify-center items-end z-[140] pointer-events-none" style={{ top: 'calc(60px + env(safe-area-inset-top))', height: 60, opacity: pullDistance > 0 || isRefreshing ? 1 : 0, transform: `translateY(${Math.min(pullDistance - 60, 0)}px)`, transition: isRefreshing || pullDistance === 0 ? 'transform 0.3s ease, opacity 0.3s' : 'none' }}>
+            <div className="flex flex-col items-center gap-1 opacity-80 pb-2"><RefreshCcw size={20} className={`text-blue-600 ${isRefreshing ? 'animate-spin' : ''}`} style={{ transform: `rotate(${pullDistance * 3}deg)` }} /></div>
+          </div>
 
-            {[
-              { title: '은행', keys: [{k: 'kb_bank', n: 'KB국민'}, {k: 'nonghyup', n: '농협'}, {k: 'kakao', n: '카카오'}, {k: 'naver', n: '네이버'}] },
-              { title: '현금', keys: [{k: 'cash', n: '현금'}] },
-              { title: '기타', keys: [{k: 'kb_pointree', n: 'KB 포인트리'}] }
-            ].map(sec => (
-              <section key={sec.title}>
-                <h3 className="font-black text-lg italic mb-3 px-1 text-slate-700">{sec.title}</h3>
-                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                  {sec.keys.map(item => (
-                    <div key={item.k} onClick={() => openLedgerModal(item.k)} className="flex justify-between items-center p-4 border-b last:border-0 border-slate-50 active:bg-slate-50 transition-colors cursor-pointer">
-                      <span className="font-bold text-sm text-slate-600">{item.n}</span>
-                      <div className="flex items-center gap-2"><span className="font-black text-slate-800">{ledger[item.k]?.toLocaleString()}원</span><ChevronRight size={14} className="text-slate-300" /></div>
+          <header className="fixed top-0 left-0 w-full bg-white/95 backdrop-blur-md border-b z-[150] flex flex-col transition-all shadow-sm">
+            <div className="h-[calc(60px+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] px-4 flex justify-center items-center w-full">
+              <h1 className="text-xl font-black tracking-tighter text-blue-600 italic">PennyWise</h1>
+            </div>
+            <div className="overflow-hidden bg-slate-50/90 border-t border-slate-100" style={{ maxHeight: isChartVisible || activeTab !== 'dashboard' ? 0 : '40px', opacity: isChartVisible || activeTab !== 'dashboard' ? 0 : 1, transition: 'max-height 0.3s ease, opacity 0.3s ease' }}>
+              <div className="px-4 py-2.5 flex justify-center gap-6 text-[11px] font-black tracking-tight">
+                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /><span className="text-slate-400 uppercase">Assets</span><span className="text-blue-700">{(totalAssets / 10000).toLocaleString()}만</span></div>
+                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-600" /><span className="text-slate-400 uppercase">Debt</span><span className="text-red-700">{(totalLiabilities / 10000).toLocaleString()}만</span></div>
+              </div>
+            </div>
+          </header>
+
+          <main className="px-5 max-w-md mx-auto relative z-10" style={{ paddingTop: 'calc(75px + env(safe-area-inset-top))', transform: `translateY(${pullDistance}px)`, transition: isRefreshing || pullDistance === 0 ? 'transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)' : 'none' }}>
+            
+            {/* --- TAB 1: Dashboard --- */}
+            {activeTab === 'dashboard' && (
+              <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
+                <section className="bg-white rounded-3xl shadow-sm border border-slate-100 p-4 mb-6 relative">
+                  <div className="flex items-center justify-between h-40">
+                    {loading ? <div className="w-full text-center text-slate-200 italic font-bold">Syncing...</div> : (
+                      <>
+                        <div className="relative w-3/5 h-full">
+                          <ResponsiveContainer><PieChart><Pie data={totalData} innerRadius={55} outerRadius={75} paddingAngle={6} dataKey="value" stroke="none">{totalData.map((entry, i) => (<Cell key={i} fill={entry.color} />))}</Pie></PieChart></ResponsiveContainer>
+                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none">
+                            <p className="text-red-600 text-lg font-black leading-tight">{Math.round((totalLiabilities / (totalAssets + totalLiabilities || 1)) * 100)}%</p>
+                          </div>
+                        </div>
+                        <div className="w-2/5 flex flex-col gap-3 pl-4 border-l font-black text-sm text-center">
+                          <div><p className="text-[10px] text-slate-400 uppercase tracking-tighter">Assets</p><p>{(totalAssets / 10000).toLocaleString()}만</p></div>
+                          <div><p className="text-[10px] text-slate-400 uppercase tracking-tighter">Debt</p><p>{(totalLiabilities / 10000).toLocaleString()}만</p></div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <div className="mt-4 bg-blue-50/50 rounded-2xl p-4 flex justify-between items-center border border-blue-100/50">
+                    <span className="text-xs font-black text-blue-600 tracking-tighter">총자산규모 (자산+부채)</span>
+                    <span className="text-xl font-black text-slate-800">{(totalAssets + totalLiabilities).toLocaleString()}원</span>
+                  </div>
+                </section>
+
+                <div className="space-y-6">
+                  {[ { title: '자산 내역', data: details.assets, icon: <Wallet size={16}/>, color: 'blue' }, { title: '부채 내역', data: details.liabilities, icon: <Landmark size={16}/>, color: 'red' } ].map((sec) => (
+                    <div key={sec.title}>
+                      <div className="flex items-center justify-between mb-3 px-1">
+                        <div className="flex items-center gap-2"><div className={`p-1.5 rounded-lg ${sec.color === 'blue' ? 'bg-blue-100 text-blue-600' : 'bg-red-100 text-red-600'}`}>{sec.icon}</div><h3 className="font-black text-lg italic">{sec.title}</h3></div>
+                        {isEditMode && <button onClick={() => { setSelectedItem({ type: sec.title.includes('자산') ? '자산' : '부채', isNew: true }); setIsModalOpen(true); }} className={`p-1.5 rounded-full shadow-md active:scale-90 transition-all ${sec.color === 'blue' ? 'bg-blue-600 text-white' : 'bg-red-600 text-white'}`}><Plus size={16}/></button>}
+                      </div>
+                      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex flex-col">
+                        {sec.data.length === 0 ? <div className="p-8 text-center text-slate-300 font-bold text-xs italic">Empty</div> : sec.data.map(item => {
+                          const isISA = item.name.toUpperCase() === 'ISA';
+                          const displayAmount = isISA ? (showIsaProfit ? isaTotal : isaPrincipal) : item.amount;
+                          
+                          return (
+                            <div key={item.id} onClick={() => { setSelectedItem(item); setIsModalOpen(true); }} className={`flex justify-between items-center p-4 border-b last:border-0 border-slate-50 ${isEditMode ? 'bg-blue-50/20 active:bg-blue-100' : 'active:bg-slate-50'}`}>
+                              <div className="flex flex-col">
+                                <span className="text-[10px] font-black text-slate-400">{item.bank || '기타'}</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-sm">{item.name}</span>
+                                  {isISA && (
+                                    <button onClick={(e) => { e.stopPropagation(); setShowIsaProfit(!showIsaProfit); }} className="active:scale-95 transition-transform">
+                                      {showIsaProfit ? <span className="text-[9px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded shadow-sm font-bold border border-blue-200">수익 포함</span> : <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded shadow-sm font-bold border border-slate-200">원금만</span>}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2"><span className="font-black text-base">{displayAmount.toLocaleString()}원</span>{isEditMode && <ChevronRight size={14} className="text-blue-400" />}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   ))}
                 </div>
-              </section>
-            ))}
+              </motion.div>
+            )}
 
-            <section>
-              <h3 className="font-black text-lg italic mb-3 px-1 text-red-600">카드결제 예정</h3>
-              <div className="bg-white rounded-2xl border border-red-100 shadow-sm overflow-hidden">
-                <div onClick={() => openLedgerModal('card_bill')} className="flex justify-between items-center p-4 active:bg-red-50 transition-colors cursor-pointer">
-                  <span className="font-bold text-sm text-slate-600">이번달 카드값</span>
-                  <div className="flex items-center gap-2">
-                    <span className="font-black text-red-600">{ledger.card_bill?.toLocaleString() || 0}원</span>
-                    <ChevronRight size={14} className="text-red-300" />
+            {/* --- TAB 2: Ledger --- */}
+            {activeTab === 'ledger' && (
+              <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
+                <div className="flex justify-between items-center bg-white p-3 rounded-2xl shadow-sm border border-slate-100">
+                  <button onClick={() => setCurrentDate(new Date(currentDate.setDate(currentDate.getDate() - 1)))} className="p-2 active:bg-slate-100 rounded-full"><ChevronLeft size={20}/></button>
+                  <h2 className="font-black text-slate-800 tracking-tighter">{formatDate(currentDate)}</h2>
+                  <button onClick={() => setCurrentDate(new Date(currentDate.setDate(currentDate.getDate() + 1)))} className="p-2 active:bg-slate-100 rounded-full"><ChevronRight size={20}/></button>
+                </div>
+
+                <section className="bg-white rounded-3xl shadow-sm border border-slate-100 p-4 relative h-[220px] flex flex-col overflow-hidden">
+                  <div className="flex justify-between items-end mb-2 relative z-10">
+                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-tighter">최종 여윳돈 흐름</h3>
+                    <p className="text-xl font-black text-blue-600">{finalSpareMoney.toLocaleString()}원</p>
+                  </div>
+                  <div className="flex-1 -ml-6 -mb-2 relative">
+                    {isChartDataValid ? (
+                      <ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><XAxis dataKey="name" hide /><Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px', fontWeight: 'bold' }}/><Line type="monotone" dataKey="value" stroke="#2563eb" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6 }} /></LineChart></ResponsiveContainer>
+                    ) : (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2"><BookOpen size={24} className="text-slate-200" /><p className="text-slate-400 font-bold text-xs tracking-tighter">가계부를 작성해 주세요</p></div>
+                    )}
+                  </div>
+                </section>
+
+                <section>
+                  <h3 className="font-black text-lg italic mb-3 px-1 text-slate-700">증권</h3>
+                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                    <div onClick={() => openLedgerModal('isa')} className="flex justify-between items-center p-4 active:bg-slate-50 transition-colors cursor-pointer">
+                      <span className="font-bold text-sm text-slate-600">ISA</span>
+                      <div className="flex items-center gap-2"><span className="font-black text-slate-800">{isaTotal.toLocaleString()}원</span><ChevronRight size={14} className="text-slate-300" /></div>
+                    </div>
+                  </div>
+                </section>
+
+                {[
+                  { title: '은행', keys: [{k: 'kb_bank', n: 'KB국민'}, {k: 'nonghyup', n: '농협'}, {k: 'kakao', n: '카카오'}, {k: 'naver', n: '네이버'}] },
+                  { title: '현금', keys: [{k: 'cash', n: '현금'}] },
+                  { title: '기타', keys: [{k: 'kb_pointree', n: 'KB 포인트리'}] }
+                ].map(sec => (
+                  <section key={sec.title}>
+                    <h3 className="font-black text-lg italic mb-3 px-1 text-slate-700">{sec.title}</h3>
+                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                      {sec.keys.map(item => (
+                        <div key={item.k} onClick={() => openLedgerModal(item.k)} className="flex justify-between items-center p-4 border-b last:border-0 border-slate-50 active:bg-slate-50 transition-colors cursor-pointer">
+                          <span className="font-bold text-sm text-slate-600">{item.n}</span>
+                          <div className="flex items-center gap-2"><span className="font-black text-slate-800">{ledger[item.k]?.toLocaleString()}원</span><ChevronRight size={14} className="text-slate-300" /></div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ))}
+
+                <section>
+                  <h3 className="font-black text-lg italic mb-3 px-1 text-red-600">카드결제 예정</h3>
+                  <div className="bg-white rounded-2xl border border-red-100 shadow-sm overflow-hidden">
+                    <div onClick={() => openLedgerModal('card_bill')} className="flex justify-between items-center p-4 active:bg-red-50 transition-colors cursor-pointer">
+                      <span className="font-bold text-sm text-slate-600">이번달 카드값</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-red-600">{ledger.card_bill?.toLocaleString() || 0}원</span>
+                        <ChevronRight size={14} className="text-red-300" />
+                      </div>
+                    </div>
+                  </div>
+                </section>
+                <div className="h-10"></div>
+              </motion.div>
+            )}
+
+            {/* --- TAB 3: Budget --- */}
+            {activeTab === 'budget' && (
+              <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
+                
+                <div className="flex justify-center items-center bg-white p-4 rounded-2xl shadow-sm border border-slate-100 mb-6 relative">
+                  <h2 className="font-black text-blue-600 text-lg tracking-tighter uppercase">{budgetMonthStr.split('-')[0]}년 {budgetMonthStr.split('-')[1]}월 예산 계획</h2>
+                  <div className="absolute right-4 flex items-center justify-center cursor-pointer p-2 bg-slate-50 rounded-full hover:bg-blue-50 transition-colors">
+                    <input type="month" value={budgetMonthStr} onChange={(e) => setBudgetMonthStr(e.target.value)} className="opacity-0 absolute inset-0 w-full h-full z-10 cursor-pointer" />
+                    <Calendar size={18} className="text-blue-600" />
                   </div>
                 </div>
-              </div>
-            </section>
-            <div className="h-10"></div>
-          </motion.div>
-        )}
 
-        {/* ==================== TAB 3: Budget ==================== */}
-        {activeTab === 'budget' && (
-          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
-            
-            <div className="flex justify-center items-center bg-white p-4 rounded-2xl shadow-sm border border-slate-100 mb-6 relative">
-              <h2 className="font-black text-blue-600 text-lg tracking-tighter uppercase">{budgetMonthStr.split('-')[0]}년 {budgetMonthStr.split('-')[1]}월 예산 계획</h2>
-              <div className="absolute right-4 flex items-center justify-center cursor-pointer p-2 bg-slate-50 rounded-full hover:bg-blue-50 transition-colors">
-                <input type="month" value={budgetMonthStr} onChange={(e) => setBudgetMonthStr(e.target.value)} className="opacity-0 absolute inset-0 w-full h-full z-10 cursor-pointer" />
-                <Calendar size={18} className="text-blue-600" />
+                <section className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl shadow-sm p-4 relative border border-blue-100 flex justify-between items-center mb-2">
+                  <div>
+                    <span className="text-xs font-black text-blue-800 tracking-tighter block">이번 달 예산 잔여금</span>
+                    <span className="text-[9px] text-blue-500 font-bold tracking-tight">가계부의 '최종 여윳돈'에 합산됨</span>
+                  </div>
+                  <span className="text-2xl font-black text-blue-600">{budgetSpareMoney.toLocaleString()}원</span>
+                </section>
+
+                <section className="space-y-4">
+                  <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-5">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-tighter block mb-2">월급 (총 수입)</label>
+                    <div className="flex items-center gap-2 border-b pb-2">
+                      <input type="number" value={budget.income || ''} onChange={(e) => handleUpdateBudget('income', Number(e.target.value))} placeholder="0" className="flex-1 bg-transparent text-2xl font-black text-slate-800 outline-none" />
+                      <span className="font-black text-slate-400">원</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-5">
+                    <label className="text-xs font-black text-slate-400 uppercase tracking-tighter block mb-2">목표 저금액</label>
+                    <div className="flex items-center gap-2 border-b pb-2">
+                      <input type="number" value={budget.savings || ''} onChange={(e) => handleUpdateBudget('savings', Number(e.target.value))} placeholder="0" className="flex-1 bg-transparent text-2xl font-black text-blue-600 outline-none" />
+                      <span className="font-black text-slate-400">원</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section>
+                  <h3 className="font-black text-lg italic mb-3 px-1 text-slate-700">고정비용</h3>
+                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex flex-col">
+                    <div className="p-4 bg-slate-50 border-b border-slate-100">
+                      <form onSubmit={handleAddFixedExpense} className="flex gap-2">
+                        <input name="name" required placeholder="항목 (예: 통신비)" className="flex-1 p-3 rounded-xl border border-slate-200 text-sm font-bold min-w-0 outline-none focus:border-blue-400" />
+                        <input name="amount" required type="number" placeholder="금액" className="w-24 p-3 rounded-xl border border-slate-200 text-sm font-bold min-w-0 outline-none focus:border-blue-400" />
+                        <button type="submit" className="bg-slate-900 text-white p-3 rounded-xl font-black active:scale-95 shrink-0"><Plus size={18} /></button>
+                      </form>
+                    </div>
+                    
+                    {fixedExpenses.length === 0 ? (
+                      <div className="p-8 text-center text-slate-300 font-bold text-xs italic">등록된 고정비가 없습니다</div>
+                    ) : (
+                      <Reorder.Group axis="y" values={fixedExpenses} onReorder={handleReorderFixedExpenses} className="flex flex-col">
+                        {fixedExpenses.map(exp => (
+                          <Reorder.Item key={exp.id} value={exp} className="flex justify-between items-center p-4 border-b last:border-0 border-slate-50 bg-white">
+                            <div className="flex items-center gap-2">
+                              <div className="cursor-grab active:cursor-grabbing p-1 -ml-1 text-slate-300"><GripVertical size={16} /></div>
+                              <span className="font-bold text-sm text-slate-700">{exp.name}</span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="font-black text-red-600 text-sm">-{exp.amount.toLocaleString()}원</span>
+                              <button onClick={() => handleDeleteFixedExpense(exp.id)} className="p-1.5 text-slate-400 hover:text-red-600 active:bg-red-50 rounded-md transition-colors border-l pl-2"><Trash2 size={14} /></button>
+                            </div>
+                          </Reorder.Item>
+                        ))}
+                      </Reorder.Group>
+                    )}
+                  </div>
+                </section>
+                
+                <div className="h-10"></div>
+              </motion.div>
+            )}
+          </main>
+
+          {/* FAB (Dashboard Only) */}
+          <div className="fixed bottom-24 right-5 z-[140] flex flex-col items-end gap-2 pointer-events-none">
+            <AnimatePresence>
+              {isEditMode && activeTab === 'dashboard' && (
+                <motion.div initial={{ opacity: 0, y: 10, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.9 }} className="bg-green-100 text-green-800 border border-green-200 text-[10px] font-black px-3 py-1.5 rounded-full shadow-sm pointer-events-auto">SAVE CHANGES</motion.div>
+              )}
+            </AnimatePresence>
+            {activeTab === 'dashboard' && (
+              <button onClick={() => isEditMode ? commitChanges() : setIsEditMode(true)} className={`p-4 rounded-full shadow-2xl transition-all active:scale-90 pointer-events-auto flex items-center justify-center ${isEditMode ? 'bg-green-600 text-white animate-bounce' : 'bg-slate-900 text-white'}`}>
+                {isEditMode ? <Check size={24} strokeWidth={3} /> : <Edit2 size={24} strokeWidth={2.5} />}
+              </button>
+            )}
+          </div>
+
+          {/* --- Dashboard Asset Modal --- */}
+          <AnimatePresence>
+            {isModalOpen && (
+              <div className="fixed inset-0 z-[300] flex items-end justify-center">
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsModalOpen(false)} />
+                <motion.form onSubmit={handleTempSave} initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} className="relative w-full max-h-[85%] bg-white rounded-t-[2.5rem] shadow-2xl px-6 pt-4 pb-6 flex flex-col max-w-md">
+                  <div className="w-12 h-1 bg-slate-200 rounded-full mx-auto mb-6 shrink-0" />
+                  <div className="flex justify-between items-center mb-6 shrink-0">
+                    <div className="flex items-center gap-2">{isEditMode || selectedItem?.isNew ? <Unlock size={18} className="text-blue-600"/> : <Lock size={18} className="text-slate-400"/>}<h3 className="text-xl font-black text-slate-800">{selectedItem?.isNew ? '항목 추가' : (isEditMode ? '항목 수정' : '상세 정보')}</h3></div>
+                    <div className="flex items-center gap-2">
+                      {isEditMode && !selectedItem?.isNew && <button type="button" onClick={() => handleTempDelete(selectedItem.id)} className="p-2 text-red-400 active:scale-90 transition-transform"><Trash2 size={20}/></button>}
+                      <button type="button" onClick={() => setIsModalOpen(false)} className="p-2 bg-slate-100 rounded-full text-slate-400"><X size={20}/></button>
+                    </div>
+                  </div>
+                  <div className="space-y-4 overflow-y-auto pr-1 no-scrollbar pb-2 flex-1">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">기관(은행)</label><select name="bank" disabled={!isEditMode && !selectedItem?.isNew} defaultValue={selectedItem?.bank || '기타'} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black outline-none min-w-0">{BANKS.map(b => <option key={b} value={b}>{b}</option>)}</select></div>
+                      <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">종류</label><select name="type" disabled={!isEditMode && !selectedItem?.isNew} defaultValue={selectedItem?.type} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black outline-none min-w-0"><option value="자산">자산</option><option value="부채">부채</option></select></div>
+                    </div>
+                    <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">항목 상세명</label><input name="name" required disabled={!isEditMode && !selectedItem?.isNew} type="text" defaultValue={selectedItem?.name} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black outline-none min-w-0" /></div>
+                    
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase ml-1">금액 (원)</label>
+                      {selectedItem?.name?.toUpperCase() === 'ISA' ? (
+                        <div className="w-full bg-slate-100 border-none rounded-xl p-3 text-sm font-black text-slate-400 flex items-center justify-between">
+                          <span>가계부 탭에서 관리됩니다</span>
+                          <BookOpen size={16} className="text-slate-300" />
+                        </div>
+                      ) : (
+                        <input name="amount" required min="0" disabled={!isEditMode && !selectedItem?.isNew} type="number" defaultValue={selectedItem?.amount} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black outline-none min-w-0" />
+                      )}
+                    </div>
+                    
+                    <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">메모</label><textarea name="memo" disabled={!isEditMode && !selectedItem?.isNew} defaultValue={selectedItem?.memo} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black h-20 outline-none resize-none min-w-0" /></div>
+                    {(isEditMode || selectedItem?.isNew) && <button type="submit" className="w-full bg-green-600 text-white py-4 rounded-xl font-black shadow-lg active:scale-95 transition-all mt-2 uppercase tracking-widest text-xs text-center shrink-0">Apply Changes</button>}
+                  </div>
+                </motion.form>
               </div>
+            )}
+          </AnimatePresence>
+
+          {/* --- Ledger Transaction Modal --- */}
+          <AnimatePresence>
+            {isLedgerModalOpen && (
+              <div className="fixed inset-0 z-[300] flex items-end justify-center">
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={closeLedgerModal} />
+                <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 200 }} className="relative w-full h-[85vh] bg-white rounded-t-[2.5rem] shadow-2xl px-6 pt-4 pb-8 flex flex-col max-w-md overflow-hidden">
+                  <div className="w-12 h-1 bg-slate-200 rounded-full mx-auto mb-6 shrink-0" />
+                  <div className="flex justify-between items-center mb-4 shrink-0">
+                    <h3 className="text-xl font-black text-slate-800 uppercase tracking-tighter">{getAccountName(selectedLedgerAccount)}</h3>
+                    <button type="button" onClick={closeLedgerModal} className="p-2 bg-slate-100 rounded-full shrink-0"><X size={20}/></button>
+                  </div>
+                  
+                  <div className="flex-1 overflow-y-auto no-scrollbar space-y-6 flex flex-col pb-[env(safe-area-inset-bottom)]">
+                    
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 shrink-0">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-tighter block mb-2">현재 잔액 (기본금 수정)</label>
+                      <div className="flex items-center gap-2">
+                        <input type="number" value={ledger[selectedLedgerAccount] || ''} onChange={(e) => updateLedgerDirect(selectedLedgerAccount, Number(e.target.value))} className="flex-1 bg-white p-3 rounded-xl font-black outline-none border border-slate-200 text-lg shadow-sm min-w-0" placeholder="0" />
+                        <span className="font-black text-slate-500 shrink-0">원</span>
+                      </div>
+                    </div>
+
+                    {selectedLedgerAccount === 'isa' && (
+                      <div className="grid grid-cols-2 gap-3 shrink-0 mt-4">
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col justify-center">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-tighter block mb-2">예수금 (추가 투입)</label>
+                            <div className="flex items-center gap-1">
+                              <input type="number" value={ledger.isa_deposit || ''} onChange={(e) => updateLedgerDirect('isa_deposit', Number(e.target.value))} className="w-full bg-transparent font-black text-lg outline-none" placeholder="0" />
+                              <span className="text-slate-400 font-bold text-sm">원</span>
+                            </div>
+                        </div>
+                        <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex flex-col justify-center">
+                            <label className="text-[10px] font-black text-blue-400 uppercase tracking-tighter block mb-2">현재 총 수익</label>
+                            <div className="flex items-center gap-1">
+                              <input type="number" value={ledger.isa_profit || ''} onChange={(e) => updateLedgerDirect('isa_profit', Number(e.target.value))} className="w-full bg-transparent font-black text-lg outline-none text-blue-600" placeholder="0" />
+                              <span className="text-blue-400 font-bold text-sm">원</span>
+                            </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedLedgerAccount !== 'isa' && (
+                      <form onSubmit={handleLedgerTransaction} className="space-y-4 shrink-0 bg-white border border-slate-100 p-4 rounded-2xl shadow-sm">
+                        {editingTx && <p className="text-[10px] font-black text-blue-600 uppercase tracking-tighter border-b pb-2 mb-2">내역 수정 모드</p>}
+                        <div className="flex gap-2">
+                          {selectedLedgerAccount === 'card_bill' ? (
+                            <div className="flex bg-red-50 p-1 rounded-xl w-[120px] shrink-0 items-center justify-center border border-red-100">
+                              <span className="text-red-600 font-black text-xs">💳 카드 사용</span>
+                            </div>
+                          ) : (
+                            <div className="flex bg-slate-100 p-1 rounded-xl w-[120px] shrink-0">
+                              <button type="button" onClick={() => setTxType('-')} className={`flex-1 rounded-lg text-xs font-black transition-all ${txType === '-' ? 'bg-white shadow text-red-600' : 'text-slate-400'}`}>- 지출</button>
+                              <button type="button" onClick={() => setTxType('+')} className={`flex-1 rounded-lg text-xs font-black transition-all ${txType === '+' ? 'bg-white shadow text-blue-600' : 'text-slate-400'}`}>+ 수입</button>
+                            </div>
+                          )}
+                          <input value={txAmount} onChange={(e) => setTxAmount(e.target.value)} required type="number" placeholder="금액" className="flex-1 bg-slate-50 p-3 rounded-xl font-black outline-none border border-slate-100 focus:border-blue-400 min-w-0" />
+                        </div>
+                        <input value={txItemName} onChange={(e) => setTxItemName(e.target.value)} required type="text" placeholder="사용 내역 (예: 스타벅스)" className="w-full bg-slate-50 p-3 rounded-xl font-black outline-none border border-slate-100 focus:border-blue-400 min-w-0" />
+                        <div className="flex gap-2">
+                          {editingTx && <button type="button" onClick={() => { setEditingTx(null); setTxAmount(''); setTxItemName(''); }} className="bg-slate-100 text-slate-600 px-4 rounded-xl font-black active:scale-95 text-xs shrink-0">취소</button>}
+                          <button type="submit" className={`flex-1 min-w-0 ${editingTx ? 'bg-blue-600' : 'bg-slate-900'} text-white py-4 rounded-xl font-black shadow-lg active:scale-95 transition-all uppercase text-sm tracking-widest`}>
+                            {editingTx ? '수정 내용 저장' : '기록 추가하기'}
+                          </button>
+                        </div>
+                      </form>
+                    )}
+
+                    {selectedLedgerAccount !== 'isa' && (
+                      <div className="flex-1 flex flex-col min-h-[150px]">
+                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-tighter mb-3 border-b pb-2 shrink-0">오늘의 내역 (위아래로 드래그하여 순서 변경)</h4>
+                        <div className="flex-1 relative">
+                          {dailyTransactions.filter(tx => tx.account === selectedLedgerAccount).length === 0 ? (
+                            <p className="text-center text-xs text-slate-300 font-bold py-10">기록된 내역이 없습니다</p>
+                          ) : (
+                            <Reorder.Group axis="y" values={dailyTransactions.filter(tx => tx.account === selectedLedgerAccount)} onReorder={handleReorder} className="space-y-2 pb-10">
+                              {dailyTransactions.filter(tx => tx.account === selectedLedgerAccount).map(tx => (
+                                <Reorder.Item key={tx.id} value={tx} className={`flex justify-between items-center p-3 rounded-xl border transition-all gap-2 ${editingTx?.id === tx.id ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-100 shadow-sm'}`}>
+                                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                                    <div className="cursor-grab active:cursor-grabbing p-1 -ml-1 hover:bg-slate-100 rounded-md shrink-0"><GripVertical size={16} className="text-slate-300" /></div>
+                                    <span className="font-bold text-sm text-slate-700 truncate">{tx.item_name}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <span className={`font-black text-sm whitespace-nowrap ${tx.type === '+' || selectedLedgerAccount === 'card_bill' ? 'text-blue-600' : 'text-red-600'}`}>
+                                      {selectedLedgerAccount === 'card_bill' ? '+' : (tx.type === '+' ? '+' : '-')}{tx.amount.toLocaleString()}
+                                    </span>
+                                    <div className="flex items-center gap-1 border-l pl-2 border-slate-100 shrink-0">
+                                      <button type="button" onClick={() => startEditTx(tx)} className="p-1.5 text-slate-400 hover:text-blue-600 active:bg-blue-50 rounded-md transition-colors"><Pencil size={14} /></button>
+                                      <button type="button" onClick={() => deleteTransaction(tx)} className="p-1.5 text-slate-400 hover:text-red-600 active:bg-red-50 rounded-md transition-colors"><Trash2 size={14} /></button>
+                                    </div>
+                                  </div>
+                                </Reorder.Item>
+                              ))}
+                            </Reorder.Group>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
+
+          {/* --- 네비게이션 탭 --- */}
+          <nav className="fixed bottom-0 w-full bg-white/90 backdrop-blur-lg border-t border-slate-100 pb-[env(safe-area-inset-bottom)] z-[200]">
+            <div className="flex justify-around items-center h-[70px] px-6 max-w-md mx-auto">
+              <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1.5 transition-colors ${activeTab === 'dashboard' ? 'text-blue-600' : 'text-slate-400'}`}>
+                <PieChartIcon size={22} strokeWidth={activeTab === 'dashboard' ? 2.5 : 2} />
+                <span className="text-[9px] font-bold uppercase tracking-widest">Dashboard</span>
+              </button>
+              <button onClick={() => setActiveTab('ledger')} className={`flex flex-col items-center gap-1.5 transition-colors ${activeTab === 'ledger' ? 'text-blue-600' : 'text-slate-400'}`}>
+                <BookOpen size={22} strokeWidth={activeTab === 'ledger' ? 2.5 : 2} />
+                <span className="text-[9px] font-bold uppercase tracking-widest">Ledger</span>
+              </button>
+              <button onClick={() => setActiveTab('budget')} className={`flex flex-col items-center gap-1.5 transition-colors ${activeTab === 'budget' ? 'text-blue-600' : 'text-slate-400'}`}>
+                <Calculator size={22} strokeWidth={activeTab === 'budget' ? 2.5 : 2} />
+                <span className="text-[9px] font-bold uppercase tracking-widest">Budget</span>
+              </button>
             </div>
-
-            <section className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl shadow-sm p-4 relative border border-blue-100 flex justify-between items-center mb-2">
-               <div>
-                 <span className="text-xs font-black text-blue-800 tracking-tighter block">이번 달 예산 잔여금</span>
-                 <span className="text-[9px] text-blue-500 font-bold tracking-tight">가계부의 '최종 여윳돈'에 합산됨</span>
-               </div>
-               <span className="text-2xl font-black text-blue-600">{budgetSpareMoney.toLocaleString()}원</span>
-            </section>
-
-            <section className="space-y-4">
-              <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-5">
-                <label className="text-xs font-black text-slate-400 uppercase tracking-tighter block mb-2">월급 (총 수입)</label>
-                <div className="flex items-center gap-2 border-b pb-2">
-                  <input type="number" value={budget.income || ''} onChange={(e) => handleUpdateBudget('income', Number(e.target.value))} placeholder="0" className="flex-1 bg-transparent text-2xl font-black text-slate-800 outline-none" />
-                  <span className="font-black text-slate-400">원</span>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-5">
-                <label className="text-xs font-black text-slate-400 uppercase tracking-tighter block mb-2">목표 저금액</label>
-                <div className="flex items-center gap-2 border-b pb-2">
-                  <input type="number" value={budget.savings || ''} onChange={(e) => handleUpdateBudget('savings', Number(e.target.value))} placeholder="0" className="flex-1 bg-transparent text-2xl font-black text-blue-600 outline-none" />
-                  <span className="font-black text-slate-400">원</span>
-                </div>
-              </div>
-            </section>
-
-            <section>
-              <h3 className="font-black text-lg italic mb-3 px-1 text-slate-700">고정비용</h3>
-              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden flex flex-col">
-                <div className="p-4 bg-slate-50 border-b border-slate-100">
-                  <form onSubmit={handleAddFixedExpense} className="flex gap-2">
-                    <input name="name" required placeholder="항목 (예: 통신비)" className="flex-1 p-3 rounded-xl border border-slate-200 text-sm font-bold min-w-0 outline-none focus:border-blue-400" />
-                    <input name="amount" required type="number" placeholder="금액" className="w-24 p-3 rounded-xl border border-slate-200 text-sm font-bold min-w-0 outline-none focus:border-blue-400" />
-                    <button type="submit" className="bg-slate-900 text-white p-3 rounded-xl font-black active:scale-95 shrink-0"><Plus size={18} /></button>
-                  </form>
-                </div>
-                
-                {fixedExpenses.length === 0 ? (
-                   <div className="p-8 text-center text-slate-300 font-bold text-xs italic">등록된 고정비가 없습니다</div>
-                ) : (
-                  <Reorder.Group axis="y" values={fixedExpenses} onReorder={handleReorderFixedExpenses} className="flex flex-col">
-                    {fixedExpenses.map(exp => (
-                      <Reorder.Item key={exp.id} value={exp} className="flex justify-between items-center p-4 border-b last:border-0 border-slate-50 bg-white">
-                        <div className="flex items-center gap-2">
-                          <div className="cursor-grab active:cursor-grabbing p-1 -ml-1 text-slate-300"><GripVertical size={16} /></div>
-                          <span className="font-bold text-sm text-slate-700">{exp.name}</span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="font-black text-red-600 text-sm">-{exp.amount.toLocaleString()}원</span>
-                          <button onClick={() => handleDeleteFixedExpense(exp.id)} className="p-1.5 text-slate-400 hover:text-red-600 active:bg-red-50 rounded-md transition-colors border-l pl-2"><Trash2 size={14} /></button>
-                        </div>
-                      </Reorder.Item>
-                    ))}
-                  </Reorder.Group>
-                )}
-              </div>
-            </section>
-            
-            <div className="h-10"></div>
-          </motion.div>
-        )}
-      </main>
-
-      {/* FAB (Dashboard Only) */}
-      <div className="fixed bottom-24 right-5 z-[140] flex flex-col items-end gap-2 pointer-events-none">
-        <AnimatePresence>
-          {isEditMode && activeTab === 'dashboard' && (
-            <motion.div initial={{ opacity: 0, y: 10, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.9 }} className="bg-green-100 text-green-800 border border-green-200 text-[10px] font-black px-3 py-1.5 rounded-full shadow-sm pointer-events-auto">SAVE CHANGES</motion.div>
-          )}
-        </AnimatePresence>
-        {activeTab === 'dashboard' && (
-          <button onClick={() => isEditMode ? commitChanges() : setIsEditMode(true)} className={`p-4 rounded-full shadow-2xl transition-all active:scale-90 pointer-events-auto flex items-center justify-center ${isEditMode ? 'bg-green-600 text-white animate-bounce' : 'bg-slate-900 text-white'}`}>
-            {isEditMode ? <Check size={24} strokeWidth={3} /> : <Edit2 size={24} strokeWidth={2.5} />}
-          </button>
-        )}
-      </div>
-
-      {/* --- Dashboard Asset Modal --- */}
-      <AnimatePresence>
-        {isModalOpen && (
-          <div className="fixed inset-0 z-[300] flex items-end justify-center">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsModalOpen(false)} />
-            <motion.form onSubmit={handleTempSave} initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} className="relative w-full max-h-[85%] bg-white rounded-t-[2.5rem] shadow-2xl px-6 pt-4 pb-6 flex flex-col max-w-md">
-              <div className="w-12 h-1 bg-slate-200 rounded-full mx-auto mb-6 shrink-0" />
-              <div className="flex justify-between items-center mb-6 shrink-0">
-                <div className="flex items-center gap-2">{isEditMode || selectedItem?.isNew ? <Unlock size={18} className="text-blue-600"/> : <Lock size={18} className="text-slate-400"/>}<h3 className="text-xl font-black text-slate-800">{selectedItem?.isNew ? '항목 추가' : (isEditMode ? '항목 수정' : '상세 정보')}</h3></div>
-                <div className="flex items-center gap-2">
-                  {isEditMode && !selectedItem?.isNew && <button type="button" onClick={() => handleTempDelete(selectedItem.id)} className="p-2 text-red-400 active:scale-90 transition-transform"><Trash2 size={20}/></button>}
-                  <button type="button" onClick={() => setIsModalOpen(false)} className="p-2 bg-slate-100 rounded-full text-slate-400"><X size={20}/></button>
-                </div>
-              </div>
-              <div className="space-y-4 overflow-y-auto pr-1 no-scrollbar pb-2 flex-1">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">기관(은행)</label><select name="bank" disabled={!isEditMode && !selectedItem?.isNew} defaultValue={selectedItem?.bank || '기타'} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black outline-none min-w-0">{BANKS.map(b => <option key={b} value={b}>{b}</option>)}</select></div>
-                  <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">종류</label><select name="type" disabled={!isEditMode && !selectedItem?.isNew} defaultValue={selectedItem?.type} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black outline-none min-w-0"><option value="자산">자산</option><option value="부채">부채</option></select></div>
-                </div>
-                <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">항목 상세명</label><input name="name" required disabled={!isEditMode && !selectedItem?.isNew} type="text" defaultValue={selectedItem?.name} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black outline-none min-w-0" /></div>
-                
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase ml-1">금액 (원)</label>
-                  {selectedItem?.name?.toUpperCase() === 'ISA' ? (
-                     <div className="w-full bg-slate-100 border-none rounded-xl p-3 text-sm font-black text-slate-400 flex items-center justify-between">
-                       <span>가계부 탭에서 관리됩니다</span>
-                       <BookOpen size={16} className="text-slate-300" />
-                     </div>
-                  ) : (
-                    <input name="amount" required min="0" disabled={!isEditMode && !selectedItem?.isNew} type="number" defaultValue={selectedItem?.amount} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black outline-none min-w-0" />
-                  )}
-                </div>
-                
-                <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-1">메모</label><textarea name="memo" disabled={!isEditMode && !selectedItem?.isNew} defaultValue={selectedItem?.memo} className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm font-black h-20 outline-none resize-none min-w-0" /></div>
-                {(isEditMode || selectedItem?.isNew) && <button type="submit" className="w-full bg-green-600 text-white py-4 rounded-xl font-black shadow-lg active:scale-95 transition-all mt-2 uppercase tracking-widest text-xs text-center shrink-0">Apply Changes</button>}
-              </div>
-            </motion.form>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* --- Ledger Transaction Modal --- */}
-      <AnimatePresence>
-        {isLedgerModalOpen && (
-          <div className="fixed inset-0 z-[300] flex items-end justify-center">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={closeLedgerModal} />
-            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 200 }} className="relative w-full h-[85vh] bg-white rounded-t-[2.5rem] shadow-2xl px-6 pt-4 pb-8 flex flex-col max-w-md overflow-hidden">
-              <div className="w-12 h-1 bg-slate-200 rounded-full mx-auto mb-6 shrink-0" />
-              <div className="flex justify-between items-center mb-4 shrink-0">
-                <h3 className="text-xl font-black text-slate-800 uppercase tracking-tighter">{getAccountName(selectedLedgerAccount)}</h3>
-                <button type="button" onClick={closeLedgerModal} className="p-2 bg-slate-100 rounded-full shrink-0"><X size={20}/></button>
-              </div>
-              
-              <div className="flex-1 overflow-y-auto no-scrollbar space-y-6 flex flex-col pb-[env(safe-area-inset-bottom)]">
-                
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 shrink-0">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-tighter block mb-2">현재 잔액 (기본금 수정)</label>
-                  <div className="flex items-center gap-2">
-                    <input type="number" value={ledger[selectedLedgerAccount] || ''} onChange={(e) => updateLedgerDirect(selectedLedgerAccount, Number(e.target.value))} className="flex-1 bg-white p-3 rounded-xl font-black outline-none border border-slate-200 text-lg shadow-sm min-w-0" placeholder="0" />
-                    <span className="font-black text-slate-500 shrink-0">원</span>
-                  </div>
-                </div>
-
-                {selectedLedgerAccount === 'isa' && (
-                  <div className="grid grid-cols-2 gap-3 shrink-0 mt-4">
-                     <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col justify-center">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-tighter block mb-2">예수금 (추가 투입)</label>
-                        <div className="flex items-center gap-1">
-                          <input type="number" value={ledger.isa_deposit || ''} onChange={(e) => updateLedgerDirect('isa_deposit', Number(e.target.value))} className="w-full bg-transparent font-black text-lg outline-none" placeholder="0" />
-                          <span className="text-slate-400 font-bold text-sm">원</span>
-                        </div>
-                     </div>
-                     <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex flex-col justify-center">
-                        <label className="text-[10px] font-black text-blue-400 uppercase tracking-tighter block mb-2">현재 총 수익</label>
-                        <div className="flex items-center gap-1">
-                          <input type="number" value={ledger.isa_profit || ''} onChange={(e) => updateLedgerDirect('isa_profit', Number(e.target.value))} className="w-full bg-transparent font-black text-lg outline-none text-blue-600" placeholder="0" />
-                          <span className="text-blue-400 font-bold text-sm">원</span>
-                        </div>
-                     </div>
-                  </div>
-                )}
-
-                {/* ISA가 아닌 항목에만 폼 렌더링 */}
-                {selectedLedgerAccount !== 'isa' && (
-                  <form onSubmit={handleLedgerTransaction} className="space-y-4 shrink-0 bg-white border border-slate-100 p-4 rounded-2xl shadow-sm">
-                    {editingTx && <p className="text-[10px] font-black text-blue-600 uppercase tracking-tighter border-b pb-2 mb-2">내역 수정 모드</p>}
-                    <div className="flex gap-2">
-                      {selectedLedgerAccount === 'card_bill' ? (
-                        <div className="flex bg-red-50 p-1 rounded-xl w-[120px] shrink-0 items-center justify-center border border-red-100">
-                          <span className="text-red-600 font-black text-xs">💳 카드 사용</span>
-                        </div>
-                      ) : (
-                        <div className="flex bg-slate-100 p-1 rounded-xl w-[120px] shrink-0">
-                          <button type="button" onClick={() => setTxType('-')} className={`flex-1 rounded-lg text-xs font-black transition-all ${txType === '-' ? 'bg-white shadow text-red-600' : 'text-slate-400'}`}>- 지출</button>
-                          <button type="button" onClick={() => setTxType('+')} className={`flex-1 rounded-lg text-xs font-black transition-all ${txType === '+' ? 'bg-white shadow text-blue-600' : 'text-slate-400'}`}>+ 수입</button>
-                        </div>
-                      )}
-                      <input value={txAmount} onChange={(e) => setTxAmount(e.target.value)} required type="number" placeholder="금액" className="flex-1 bg-slate-50 p-3 rounded-xl font-black outline-none border border-slate-100 focus:border-blue-400 min-w-0" />
-                    </div>
-                    <input value={txItemName} onChange={(e) => setTxItemName(e.target.value)} required type="text" placeholder="사용 내역 (예: 스타벅스)" className="w-full bg-slate-50 p-3 rounded-xl font-black outline-none border border-slate-100 focus:border-blue-400 min-w-0" />
-                    <div className="flex gap-2">
-                      {editingTx && <button type="button" onClick={() => { setEditingTx(null); setTxAmount(''); setTxItemName(''); }} className="bg-slate-100 text-slate-600 px-4 rounded-xl font-black active:scale-95 text-xs shrink-0">취소</button>}
-                      <button type="submit" className={`flex-1 min-w-0 ${editingTx ? 'bg-blue-600' : 'bg-slate-900'} text-white py-4 rounded-xl font-black shadow-lg active:scale-95 transition-all uppercase text-sm tracking-widest`}>
-                        {editingTx ? '수정 내용 저장' : '기록 추가하기'}
-                      </button>
-                    </div>
-                  </form>
-                )}
-
-                {selectedLedgerAccount !== 'isa' && (
-                  <div className="flex-1 flex flex-col min-h-[150px]">
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-tighter mb-3 border-b pb-2 shrink-0">오늘의 내역 (위아래로 드래그하여 순서 변경)</h4>
-                    <div className="flex-1 relative">
-                      {dailyTransactions.filter(tx => tx.account === selectedLedgerAccount).length === 0 ? (
-                        <p className="text-center text-xs text-slate-300 font-bold py-10">기록된 내역이 없습니다</p>
-                      ) : (
-                        <Reorder.Group axis="y" values={dailyTransactions.filter(tx => tx.account === selectedLedgerAccount)} onReorder={handleReorder} className="space-y-2 pb-10">
-                          {dailyTransactions.filter(tx => tx.account === selectedLedgerAccount).map(tx => (
-                            <Reorder.Item key={tx.id} value={tx} className={`flex justify-between items-center p-3 rounded-xl border transition-all gap-2 ${editingTx?.id === tx.id ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-100 shadow-sm'}`}>
-                              <div className="flex items-center gap-2 flex-1 min-w-0">
-                                <div className="cursor-grab active:cursor-grabbing p-1 -ml-1 hover:bg-slate-100 rounded-md shrink-0"><GripVertical size={16} className="text-slate-300" /></div>
-                                <span className="font-bold text-sm text-slate-700 truncate">{tx.item_name}</span>
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                <span className={`font-black text-sm whitespace-nowrap ${tx.type === '+' || selectedLedgerAccount === 'card_bill' ? 'text-blue-600' : 'text-red-600'}`}>
-                                  {selectedLedgerAccount === 'card_bill' ? '+' : (tx.type === '+' ? '+' : '-')}{tx.amount.toLocaleString()}
-                                </span>
-                                <div className="flex items-center gap-1 border-l pl-2 border-slate-100 shrink-0">
-                                  <button type="button" onClick={() => startEditTx(tx)} className="p-1.5 text-slate-400 hover:text-blue-600 active:bg-blue-50 rounded-md transition-colors"><Pencil size={14} /></button>
-                                  <button type="button" onClick={() => deleteTransaction(tx)} className="p-1.5 text-slate-400 hover:text-red-600 active:bg-red-50 rounded-md transition-colors"><Trash2 size={14} /></button>
-                                </div>
-                              </div>
-                            </Reorder.Item>
-                          ))}
-                        </Reorder.Group>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* --- 네비게이션 탭 --- */}
-      <nav className="fixed bottom-0 w-full bg-white/90 backdrop-blur-lg border-t border-slate-100 pb-[env(safe-area-inset-bottom)] z-[200]">
-        <div className="flex justify-around items-center h-[70px] px-6 max-w-md mx-auto">
-          <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1.5 transition-colors ${activeTab === 'dashboard' ? 'text-blue-600' : 'text-slate-400'}`}>
-            <PieChartIcon size={22} strokeWidth={activeTab === 'dashboard' ? 2.5 : 2} />
-            <span className="text-[9px] font-bold uppercase tracking-widest">Dashboard</span>
-          </button>
-          <button onClick={() => setActiveTab('ledger')} className={`flex flex-col items-center gap-1.5 transition-colors ${activeTab === 'ledger' ? 'text-blue-600' : 'text-slate-400'}`}>
-            <BookOpen size={22} strokeWidth={activeTab === 'ledger' ? 2.5 : 2} />
-            <span className="text-[9px] font-bold uppercase tracking-widest">Ledger</span>
-          </button>
-          <button onClick={() => setActiveTab('budget')} className={`flex flex-col items-center gap-1.5 transition-colors ${activeTab === 'budget' ? 'text-blue-600' : 'text-slate-400'}`}>
-            <Calculator size={22} strokeWidth={activeTab === 'budget' ? 2.5 : 2} />
-            <span className="text-[9px] font-bold uppercase tracking-widest">Budget</span>
-          </button>
+          </nav>
         </div>
-      </nav>
+      )}
 
       <style jsx global>{`html, body { background-color: white !important; overscroll-behavior-y: none; } .no-scrollbar::-webkit-scrollbar { display: none; }`}</style>
-    </div>
+    </>
   );
 }
